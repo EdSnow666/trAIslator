@@ -1,0 +1,23 @@
+# 本机配置与密钥
+.env
+.env.*
+*.local
+
+# 依赖与日志
+node_modules/
+*.log
+
+# 实验与测试产物
+experiments/
+
+# 不纳入仓库的演示截图
+translation-aiducator-adaptive-zoom.png
+translation-aiducator-demo.png
+translation-aiducator-diff-fix.png
+translation-aiducator-layout-upgrade.png
+
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

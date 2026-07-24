@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="面向英中、中英翻译教学的 Prompt 驱动型 CAT 演示工具">
+  <title>Translation AIducator</title>
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/layout.css">
+  <link rel="stylesheet" href="./styles/components.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">TA</div>
+        <div>
+          <div class="brand-title">Translation AIducator</div>
+          <div class="brand-subtitle">Prompt-driven CAT Classroom</div>
+        </div>
+      </div>
+
+      <div class="project-switcher">
+        <label class="sr-only" for="project-select">当前项目</label>
+        <select id="project-select" class="field field-compact"></select>
+        <span id="direction-badge" class="badge badge-direction"></span>
+      </div>
+
+      <div id="project-stats" class="top-stats" aria-label="项目进度"></div>
+
+      <div class="top-actions">
+        <label class="role-switcher">
+          <span>演示身份</span>
+          <select id="role-select" class="field field-compact">
+            <option value="student">学生 · 当前学生</option>
+            <option value="teacher">教师 · 林老师</option>
+          </select>
+        </label>
+        <button id="api-button" class="button button-ghost">API 接口</button>
+        <button id="export-button" class="button button-ghost">导出</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="left-rail" data-pane="left" tabindex="0" aria-label="左侧项目栏"><div class="pane-zoom pane-left-content">
+        <section class="rail-section project-card">
+          <div class="eyebrow">CURRENT PROJECT</div>
+          <h1 id="project-title"></h1>
+          <p id="project-meta" class="muted"></p>
+          <button id="brief-button" class="button button-soft button-full">查看冷启动任务书</button>
+        </section>
+
+        <section class="rail-section">
+          <div class="section-heading">
+            <span>文档句段</span>
+            <button id="import-button" class="icon-button" title="导入文本" aria-label="导入文本">＋</button>
+          </div>
+          <div class="segment-filter" role="group" aria-label="句段筛选">
+            <button class="filter-chip is-active" data-filter="all">全部</button>
+            <button class="filter-chip" data-filter="edited">已编辑</button>
+            <button class="filter-chip" data-filter="translated">待确认</button>
+          </div>
+          <nav id="segment-nav" class="segment-nav" aria-label="句段导航"></nav>
+        </section>
+
+        <section class="rail-section prompt-history-section">
+          <div class="section-heading">
+            <span>Prompt 谱系</span>
+            <button id="new-prompt-button" class="text-button">新建版本</button>
+          </div>
+          <div id="prompt-history" class="prompt-history"></div>
+        </section>
+
+        <section class="rail-footer">
+          <button id="reset-button" class="text-button danger-text">重置预存演示</button>
+          <span>本地演示 · 无后端</span>
+        </section>
+      </div></aside>
+
+      <div class="column-resizer" data-resizer="left" role="separator" aria-label="调整左栏宽度" aria-orientation="vertical" tabindex="0"></div>
+
+      <main class="editor-pane" data-pane="center" tabindex="0" aria-label="中央编辑栏"><div class="pane-zoom pane-editor-content">
+        <div class="editor-toolbar">
+          <div class="toolbar-group">
+            <button id="generate-current-button" class="button button-primary">模拟重译当前句</button>
+            <button id="generate-all-button" class="button button-secondary">用当前 Prompt 重译全文</button>
+          </div>
+          <div class="toolbar-context">
+            <span class="muted">当前使用</span>
+            <strong id="active-prompt-label"></strong>
+            <span id="mode-pill" class="badge badge-mock">MOCK</span>
+          </div>
+          <div class="toolbar-group">
+            <button id="compare-button" class="button button-ghost" aria-pressed="false">查看全文 Diff</button>
+          </div>
+        </div>
+
+        <div class="column-head" aria-hidden="true">
+          <div>原文 SOURCE</div>
+          <div>译文 TARGET · 可直接译后编辑</div>
+          <div>状态</div>
+        </div>
+
+        <section id="segment-grid" class="segment-grid" aria-label="双语句段编辑器"></section>
+      </div></main>
+
+      <div class="column-resizer" data-resizer="right" role="separator" aria-label="调整右栏宽度" aria-orientation="vertical" tabindex="0"></div>
+
+      <aside class="right-panel" data-pane="right" tabindex="0" aria-label="右侧详情栏"><div class="pane-zoom pane-right-content">
+        <div class="right-tabs" role="tablist" aria-label="教学资源">
+          <button class="right-tab is-active" data-tab="prompt" role="tab">Prompt</button>
+          <button class="right-tab" data-tab="terms" role="tab">术语</button>
+          <button class="right-tab" data-tab="tm" role="tab">TM</button>
+          <button class="right-tab" data-tab="mentor" role="tab">AI 教练</button>
+        </div>
+        <div id="right-content" class="right-content"></div>
+      </div></aside>
+    </div>
+
+    <footer class="statusbar">
+      <span id="save-status">所有更改保存在本机</span>
+      <span>拖动分栏线调整宽度 · 聚焦栏后 Ctrl +/- 或 Ctrl+滚轮缩放</span>
+      <span id="current-user-status"></span>
+    </footer>
+  </div>
+
+  <div id="drawer-root"></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <script type="module" src="./scripts/app.js"></script>
+</body>
+</html>

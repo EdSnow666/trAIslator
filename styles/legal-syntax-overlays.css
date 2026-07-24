@@ -1,0 +1,210 @@
+.data-inspector {
+  margin-top: 22px;
+  border-top: 1px solid var(--lab-border);
+  padding-top: 15px;
+}
+
+.data-inspector summary,
+.schema-preview summary {
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.data-inspector pre,
+.schema-preview pre {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--lab-border);
+  border-radius: 7px;
+  background: #f5f4f0;
+  color: #343b43;
+  padding: 14px;
+  font: 11px/1.55 Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.lab-dialog {
+  width: min(760px, calc(100% - 28px));
+  max-height: calc(100vh - 40px);
+  border: 1px solid var(--lab-border);
+  border-radius: 12px;
+  background: var(--lab-panel);
+  color: var(--lab-text);
+  padding: 0;
+  box-shadow: 0 28px 80px rgb(20 28 36 / 28%);
+}
+
+.lab-dialog::backdrop {
+  background: rgb(25 31 39 / 48%);
+}
+
+.lab-dialog form {
+  padding: 22px;
+}
+
+.lab-dialog-small {
+  width: min(520px, calc(100% - 28px));
+}
+
+.dialog-heading {
+  justify-content: space-between;
+}
+
+.dialog-heading h2 {
+  font-size: 21px;
+}
+
+.dialog-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--lab-muted);
+  font-size: 24px;
+}
+
+.dialog-note {
+  margin: 14px 0;
+  color: var(--lab-muted);
+  font-size: 11px;
+}
+
+.dialog-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--lab-muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.dialog-field textarea {
+  width: 100%;
+  border: 1px solid var(--lab-border);
+  border-radius: 7px;
+  background: var(--lab-canvas);
+  color: var(--lab-text);
+  padding: 12px;
+  font: 12px/1.6 Consolas, monospace;
+  resize: vertical;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.lab-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  max-width: 360px;
+  border-radius: 8px;
+  background: var(--navy);
+  color: #fff;
+  padding: 11px 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: 180ms ease;
+}
+
+.lab-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 1000px) {
+  .lab-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .color-controls {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+    order: 3;
+  }
+
+  .workbench-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .explanation-panel {
+    border-top: 1px solid var(--lab-border);
+    border-left: 0;
+    padding-top: 20px;
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .lab-header {
+    position: static;
+    grid-template-columns: 1fr;
+    padding: 12px 16px;
+  }
+
+  .color-controls,
+  .header-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .lab-main {
+    width: min(100% - 20px, 1440px);
+    padding-top: 14px;
+  }
+
+  .input-section,
+  .analysis-workspace {
+    padding: 17px;
+  }
+
+  .analysis-heading {
+    padding: 17px;
+  }
+
+  .section-title-row,
+  .input-footer,
+  .workspace-toolbar,
+  .practice-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .example-picker select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .analysis-actions,
+  .input-actions {
+    flex-wrap: wrap;
+  }
+
+  .clause-card::after {
+    display: none;
+  }
+
+  .modifier-card,
+  .nesting-target {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-switch {
+    width: fit-content;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .syntax-group,
+  .lab-toast,
+  .button {
+    transition: none;
+  }
+}

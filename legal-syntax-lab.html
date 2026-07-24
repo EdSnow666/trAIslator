@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="面向法律英语长句的 AI 结构分析与拖拽重组实验室">
+  <title>法律句法实验室 · Translation AIducator</title>
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/legal-syntax-lab.css">
+  <link rel="stylesheet" href="./styles/legal-syntax-overlays.css">
+  <link rel="stylesheet" href="./styles/legal-syntax-history.css">
+</head>
+<body class="legal-lab-body">
+  <header class="lab-header">
+    <a class="lab-brand" href="./index.html" aria-label="返回 Translation AIducator">
+      <span class="lab-brand-mark" aria-hidden="true">§</span>
+      <span>
+        <strong>法律句法实验室</strong>
+        <small>Legal Syntax Lab</small>
+      </span>
+    </a>
+
+    <div class="color-controls" role="group" aria-label="着色提示">
+      <span class="control-label">训练提示</span>
+      <button id="toggle-keywords" class="color-toggle is-active" type="button" aria-pressed="true">
+        <span class="toggle-dot keyword-dot" aria-hidden="true"></span>语法词着色
+      </button>
+      <button id="toggle-structure" class="color-toggle is-active" type="button" aria-pressed="true">
+        <span class="toggle-dot structure-dot" aria-hidden="true"></span>结构着色
+      </button>
+    </div>
+
+    <div class="header-actions">
+      <button id="history-button" class="button button-ghost history-button" type="button">
+        历史记录 <span id="history-count" class="history-count">0</span>
+      </button>
+      <button id="prompt-button" class="button button-ghost" type="button">编辑 Prompt</button>
+      <button id="api-button" class="button button-ghost" type="button">AI 接口</button>
+    </div>
+  </header>
+
+  <main class="lab-main">
+    <section class="input-section" aria-labelledby="input-title">
+      <div class="section-title-row">
+        <div>
+          <span class="step-label">01 · INPUT</span>
+          <h1 id="input-title">粘贴一条英文法律长句</h1>
+        </div>
+        <label class="example-picker">
+          <span>种子示例</span>
+          <select id="example-select" class="field field-compact">
+            <option value="example-1">例 1 · 知情未披露与责任限制</option>
+            <option value="example-2">例 2 · 披露、修改与既有责任</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="source-editor" class="source-editor is-colored">
+        <pre id="source-highlight" class="source-highlight" aria-hidden="true"></pre>
+        <textarea id="source-input" spellcheck="false" aria-label="英文法律原文"></textarea>
+      </div>
+
+      <div class="input-footer">
+        <div class="self-test-note">
+          <strong>自测提示：</strong>
+          关闭两种着色后先自行划分结构，再打开答案核对。
+        </div>
+        <div class="input-actions">
+          <button id="clear-button" class="button button-ghost" type="button">清空</button>
+          <button id="analyse-button" class="button button-primary" type="button">用 AI 分析</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="analysis-section" aria-labelledby="analysis-title">
+      <div class="section-title-row analysis-heading">
+        <div>
+          <span class="step-label">02 · ANALYSE</span>
+          <h2 id="analysis-title">分析工作台</h2>
+        </div>
+        <div class="analysis-actions">
+          <span id="analysis-source-badge" class="source-badge">种子分析</span>
+          <button id="load-analysis-button" class="button button-secondary" type="button">载入示例分析</button>
+        </div>
+      </div>
+
+      <div id="status-banner" class="status-banner" role="status" aria-live="polite">
+        已载入示例原文。点击“载入示例分析”，或配置接口后使用 AI 分析。
+      </div>
+
+      <div id="analysis-workspace" class="analysis-workspace" hidden>
+        <section class="sentence-map" aria-labelledby="sentence-map-title">
+          <div class="workspace-toolbar">
+            <div>
+              <span class="panel-kicker">SENTENCE MAP</span>
+              <h3 id="sentence-map-title">原文结构着色</h3>
+            </div>
+            <div id="legend" class="syntax-legend" aria-label="颜色图例"></div>
+          </div>
+          <div id="analysed-sentence" class="analysed-sentence" tabindex="0"></div>
+        </section>
+
+        <div class="workbench-grid">
+          <section class="structure-panel" aria-labelledby="structure-title">
+            <div class="workspace-toolbar">
+              <div>
+                <span class="panel-kicker">STRUCTURE</span>
+                <h3 id="structure-title">句法骨架与重组</h3>
+              </div>
+              <div class="mode-switch" role="tablist" aria-label="工作台模式">
+                <button class="mode-button is-active" type="button" data-mode="read" role="tab" aria-selected="true">阅读</button>
+                <button class="mode-button" type="button" data-mode="sequence" role="tab" aria-selected="false">语序重组</button>
+                <button class="mode-button" type="button" data-mode="nesting" role="tab" aria-selected="false">结构归位</button>
+              </div>
+            </div>
+
+            <div id="read-mode" class="mode-panel">
+              <div id="clause-spine" class="clause-spine"></div>
+              <div class="subsection-label">修饰关系</div>
+              <div id="modifier-tree" class="modifier-tree"></div>
+            </div>
+
+            <div id="sequence-mode" class="mode-panel" hidden>
+              <div class="practice-heading">
+                <p>拖动语块，恢复法律逻辑的展开顺序。</p>
+                <div>
+                  <button id="shuffle-sequence" class="text-button" type="button">重新打乱</button>
+                  <button id="show-sequence-answer" class="text-button" type="button">显示答案</button>
+                </div>
+              </div>
+              <div id="sequence-lane" class="sequence-lane" aria-label="语序重组区"></div>
+              <div id="sequence-feedback" class="practice-feedback" aria-live="polite"></div>
+            </div>
+
+            <div id="nesting-mode" class="mode-panel" hidden>
+              <div class="practice-heading">
+                <p>把修饰语拖到它所依附的分句中。</p>
+                <button id="reset-nesting" class="text-button" type="button">重置练习</button>
+              </div>
+              <div id="modifier-bank" class="modifier-bank" aria-label="待归位修饰语"></div>
+              <div id="nesting-targets" class="nesting-targets" aria-label="结构归位区"></div>
+              <div id="nesting-feedback" class="practice-feedback" aria-live="polite"></div>
+            </div>
+          </section>
+
+          <aside class="explanation-panel" aria-labelledby="explanation-title">
+            <div>
+              <span class="panel-kicker">EXPLAIN</span>
+              <h3 id="explanation-title">同步讲解</h3>
+            </div>
+            <div id="selected-detail" class="selected-detail"></div>
+            <div class="translation-heading">
+              <span class="subsection-label">中文参考翻译</span>
+              <span>点击译文片段可反查英文结构</span>
+            </div>
+            <div id="translation-view" class="translation-view"></div>
+          </aside>
+        </div>
+
+        <details class="data-inspector">
+          <summary>查看本次结构化 JSON</summary>
+          <pre id="json-output"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="prompt-dialog" class="lab-dialog">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="step-label">PROMPT</span>
+          <h2>编辑分析要求</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭" type="submit">×</button>
+      </div>
+      <p class="dialog-note">你可以修改分析重点；JSON 字段协议由程序锁定，不会随此处内容改变。</p>
+      <label class="dialog-field">
+        <span>用户分析 Prompt</span>
+        <textarea id="prompt-editor" rows="16"></textarea>
+      </label>
+      <details class="schema-preview">
+        <summary>查看锁定的数据协议</summary>
+        <pre id="schema-preview"></pre>
+      </details>
+      <div class="dialog-actions">
+        <button id="reset-prompt-button" class="button button-ghost" value="noop" type="button">恢复模板</button>
+        <button id="save-prompt-button" class="button button-primary" value="noop" type="button">保存 Prompt</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="api-dialog" class="lab-dialog lab-dialog-small">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="step-label">API</span>
+          <h2>OpenAI-compatible 接口</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭" type="submit">×</button>
+      </div>
+      <p class="dialog-note">默认使用本机 Gemini 代理，API Key 不会进入网页。也可临时改用其他 OpenAI-compatible 接口。</p>
+      <label class="dialog-field">
+        <span>Chat Completions Endpoint</span>
+        <input id="api-endpoint" class="field" type="url" placeholder="https://.../v1/chat/completions">
+      </label>
+      <label class="dialog-field">
+        <span>模型</span>
+        <input id="api-model" class="field" type="text" placeholder="your-model-name">
+      </label>
+      <label class="dialog-field">
+        <span>API Key</span>
+        <input id="api-key" class="field" type="password" autocomplete="off" placeholder="sk-...">
+      </label>
+      <div class="dialog-actions">
+        <button id="save-api-button" class="button button-primary" value="noop" type="button">保存到当前页面</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="history-dialog" class="lab-dialog history-dialog">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="step-label">HISTORY</span>
+          <h2>AI 分析历史</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭" type="submit">×</button>
+      </div>
+      <div class="history-toolbar">
+        <label class="history-select-all">
+          <input id="history-select-all" type="checkbox">
+          <span>全选</span>
+        </label>
+        <span id="history-selected-count">已选择 0 条</span>
+        <button id="export-history-button" class="button button-primary" type="button" disabled>导出选择到 Word</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </form>
+  </dialog>
+  <div id="toast" class="lab-toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./scripts/legal-syntax-lab.js"></script>
+</body>
+</html>
