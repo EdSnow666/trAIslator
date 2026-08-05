@@ -1,16 +1,20 @@
 /**
  * 职责: 将当前项目状态渲染为 CAT 工作台、资源面板与版本导航
- * 依赖内部: ../state/store.js, ../services/diff-engine.js
+ * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ./ai-post-edit-view.js
  * 依赖外部: DOM API
- * 暴露: renderApp | escapeHtml | renderLiveDiff | renderDiffParts
+ * 暴露: renderApp | escapeHtml | renderLiveDiff | renderAiHumanDiff | renderDiffParts | resizeTargetEditor
  */
 
-import { store } from '../state/store.js';
+import { store } from '../state/store.js?v=20260805-04';
 import { buildDiff } from '../services/diff-engine.js';
+import { resolveAiPostEdit } from '../services/ai-post-edit.js?v=20260804-01';
+import { analyzePromptCoach } from '../services/prompt-coach.js?v=20260804-01';
+import { hasVisibleAiPostEdit, renderAiPostEditField } from './ai-post-edit-view.js?v=20260804-01';
 
 const STATUS_TEXT = {
   empty: '待生成',
   translated: '待确认',
+  'ai-edited': 'AI已编辑',
   edited: '已编辑',
   reviewed: '已确认',
 };
@@ -21,11 +25,28 @@ export function escapeHtml(value = '') {
   })[character]);
 }
 
+function promptLabel(prompt) {
+  return prompt?.displayLabel || `v${prompt?.version || '?'}`;
+}
+
+function isManualTranslation(translation) {
+  return Boolean(translation && (translation.origin === 'manual'
+    || translation.serverVersionKind === 'manual_reference'));
+}
+
+function hasPairedAiVersion(translation) {
+  return Boolean(translation?.aiPostEdit && translation.serverVersionKind !== 'ai_post_edit');
+}
+
+function translationSourceLabel(translation, prompt) {
+  return isManualTranslation(translation) ? '参考译文 · 人工翻译' : `Prompt ${promptLabel(prompt)}`;
+}
+
 export function renderApp() {
   const state = store.getState();
   const project = store.getProject();
   renderHeader(state, project);
-  renderDiffToolbar(state);
+  renderViewToggles(state);
   renderProjectCard(project);
   renderSegmentNav(state, project);
   renderPromptHistory(project);
@@ -40,41 +61,52 @@ function renderHeader(state, project) {
     `<option value="${escapeHtml(item.id)}" ${item.id === project.id ? 'selected' : ''}>${escapeHtml(item.name)}</option>`
   )).join('');
   document.querySelector('#direction-badge').textContent = project.direction;
+  renderProjectTags(project);
   document.querySelector('#role-select').value = state.role;
-  document.querySelector('#project-stats').innerHTML = projectStats(project);
-}
-function renderDiffToolbar(state) {
-  const button = document.querySelector('#compare-button');
-  button.textContent = state.diffMode ? '关闭全文 Diff' : '查看全文 Diff';
-  button.classList.toggle('is-active', state.diffMode);
-  button.setAttribute('aria-pressed', String(state.diffMode));
 }
 
-function projectStats(project) {
-  const edited = project.segments.filter((item) => ['edited', 'reviewed'].includes(item.status)).length;
-  const versions = project.segments.reduce((sum, item) => sum + item.translations.length, 0);
-  return [
-    `<div class="top-stat"><strong>${project.segments.length}</strong><span>句段</span></div>`,
-    `<div class="top-stat"><strong>${edited}</strong><span>已译后编辑</span></div>`,
-    `<div class="top-stat"><strong>${versions}</strong><span>译文版本</span></div>`,
-  ].join('');
+function renderProjectTags(project) {
+  const origin = document.querySelector('#project-origin-tag');
+  const classes = document.querySelector('#project-class-tags');
+  origin.textContent = project.projectKind === 'system_template' ? '模板' : '本地';
+  origin.title = project.creationSource || 'local';
+  const tags = project.classTags || [];
+  classes.innerHTML = tags.length
+    ? `<span class="badge badge-project-class" title="${escapeHtml(tags.join('、'))}">班级 ${tags.length}</span>` : '';
+}
+
+function renderViewToggles(state) {
+  updateMenuToggle('#compare-button', state.diffMode, '关闭全文 Diff', '查看全文 Diff');
+  updateMenuToggle('#all-versions-button', state.allVersionsMode, '隐藏全部翻译版本', '查看全部翻译版本');
+  updateMenuToggle('#ai-post-edit-toggle', state.aiPostEditVisible, '隐藏 AI 译后编辑', '显示 AI 译后编辑');
+}
+
+function updateMenuToggle(selector, enabled, enabledText, disabledText) {
+  const button = document.querySelector(selector);
+  button.querySelector('span:first-child').textContent = enabled ? enabledText : disabledText;
+  button.querySelector('.menu-check').classList.toggle('is-visible', enabled);
+  button.classList.toggle('is-active', enabled);
+  button.setAttribute('aria-pressed', String(enabled));
 }
 
 function renderProjectCard(project) {
   document.querySelector('#project-title').textContent = project.name;
   document.querySelector('#project-meta').textContent = `${project.sourceLang} → ${project.targetLang} · 教学演示项目`;
   const prompt = project.prompts.find((item) => item.id === project.activePromptId);
-  document.querySelector('#active-prompt-label').textContent = `Prompt v${prompt.version} · ${prompt.title}`;
+  document.querySelector('#active-prompt-label').textContent = `Prompt ${promptLabel(prompt)} · ${prompt.title}`;
 }
 
 function renderSegmentNav(state, project) {
   const activeFilter = document.querySelector('.filter-chip.is-active')?.dataset.filter || 'all';
-  const segments = activeFilter === 'all'
-    ? project.segments
-    : project.segments.filter((item) => item.status === activeFilter);
+  const segments = project.segments.filter((segment) => matchesSegmentFilter(segment, activeFilter));
   document.querySelector('#segment-nav').innerHTML = segments.map((segment) => segmentNavItem(state, segment, project)).join('');
 }
 
+function matchesSegmentFilter(segment, activeFilter) {
+  if (activeFilter === 'all') return true;
+  if (activeFilter === 'edited') return ['edited', 'ai-edited'].includes(segment.status);
+  return segment.status === activeFilter;
+}
 function segmentNavItem(state, segment, project) {
   const index = project.segments.indexOf(segment) + 1;
   return `<button class="segment-nav-item ${state.currentSegmentId === segment.id ? 'is-active' : ''}" data-action="select-segment" data-segment-id="${segment.id}">
@@ -84,60 +116,278 @@ function segmentNavItem(state, segment, project) {
   </button>`;
 }
 
+function promptCollaborationLabel(prompt) {
+  if (prompt.isPublished) return '项目发布版';
+  if (prompt.submissionStatus === 'submitted') return '已提交教师';
+  if (prompt.submissionStatus === 'accepted') return '已采纳';
+  if (prompt.isOwnedByCurrentUser) return '仅自己可见';
+  return '';
+}
+
 function renderPromptHistory(project) {
-  const items = [...project.prompts].sort((a, b) => b.version - a.version);
-  document.querySelector('#prompt-history').innerHTML = items.map((prompt) => (
-    `<button class="prompt-history-item ${prompt.id === project.activePromptId ? 'is-active' : ''}" data-action="activate-prompt" data-prompt-id="${prompt.id}">
-      <span class="prompt-history-top"><span class="prompt-version">v${prompt.version}</span><span class="prompt-author">${escapeHtml(prompt.author)} · ${escapeHtml(prompt.role)}</span></span>
+  const prompts = [...project.prompts].sort((left, right) => right.version - left.version);
+  document.querySelector('#prompt-history').innerHTML = prompts.map((prompt) => {
+    const status = promptCollaborationLabel(prompt);
+    return `<button class="prompt-history-item ${prompt.id === project.activePromptId ? 'is-active' : ''}" data-action="activate-prompt" data-prompt-id="${prompt.id}">
+      <span class="prompt-history-top"><span class="prompt-version">${escapeHtml(promptLabel(prompt))}</span><span class="prompt-author">${escapeHtml(prompt.author)} · ${escapeHtml(prompt.role)}</span></span>
       <span class="prompt-history-title">${escapeHtml(prompt.title)}</span>
+      ${status ? `<span class="prompt-history-status">${escapeHtml(status)}</span>` : ''}
       <span class="prompt-history-note">${escapeHtml(prompt.note)}</span>
-    </button>`
-  )).join('');
+    </button>`;
+  }).join('');
 }
 
 function renderSegments(state, project) {
   const grid = document.querySelector('#segment-grid');
-  grid.innerHTML = project.segments.map((segment, index) => segmentRow(state, segment, index)).join('');
-  requestAnimationFrame(() => scrollActiveSegment(state.currentSegmentId));
+  grid.innerHTML = project.segments.map((segment, index) => segmentRow(state, project, segment, index)).join('');
+  requestAnimationFrame(() => {
+    resizeTargetEditors();
+    scrollActiveSegment(state.currentSegmentId);
+  });
 }
 
-function segmentRow(state, segment, index) {
+function resizeTargetEditors() {
+  document.querySelectorAll('.target-editor').forEach((editor) => resizeTargetEditor(editor));
+}
+
+export function resizeTargetEditor(editor) {
+  editor.style.height = 'auto';
+  const contentHeight = editor.scrollHeight;
+  const maxHeight = editor.value.trim().length <= 200 ? contentHeight : 520;
+  editor.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+  editor.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
+}
+
+function segmentRow(state, project, segment, index) {
   const current = segment.translations.find((item) => item.id === segment.currentTranslationId);
-  const target = current?.postEditText || current?.aiText || '';
   const prompt = current ? store.getPrompt(current.promptId) : null;
+  const aiVisible = hasVisibleAiPostEdit(state, current);
+  const target = state.allVersionsMode
+    ? allVersionTargets(state, project, segment, index)
+    : currentTarget(state, project, segment, index, current, prompt);
   return `<article class="segment-row ${state.currentSegmentId === segment.id ? 'is-active' : ''}" data-segment-row="${segment.id}">
     <div class="segment-cell source-cell" data-action="select-segment" data-segment-id="${segment.id}">
       <span class="segment-number">${String(index + 1).padStart(3, '0')}</span><div class="source-text">${escapeHtml(segment.source)}</div>
     </div>
-    <div class="segment-cell target-cell">
-      <textarea class="target-editor" data-segment-editor="${segment.id}" aria-label="第 ${index + 1} 句译文" placeholder="尚无译文，请模拟生成">${escapeHtml(target)}</textarea>
-      ${state.diffMode ? inlineDiff(segment.id, target) : ''}
-      <div class="target-actions">
-        <button class="version-button" data-action="open-versions" data-segment-id="${segment.id}">${segment.translations.length} 个版本 · ${prompt ? `P${prompt.version}` : '未生成'}</button>
-        <button class="save-segment-button" data-action="save-segment" data-segment-id="${segment.id}">保存译后编辑</button>
-      </div>
-    </div>
-    <div class="segment-status-cell">
-      <span class="status-icon ${segment.status}">${statusIcon(segment.status)}</span>
-      <span class="status-label">${STATUS_TEXT[segment.status] || '待处理'}</span>
-    </div>
+    <div class="segment-cell target-cell ${state.allVersionsMode ? 'is-all-versions' : ''} ${aiVisible ? 'is-ai-post-editing' : ''}">${target}</div>
+    <div class="segment-status-cell"><span class="status-icon ${segment.status}">${statusIcon(segment.status)}</span>
+      <span class="status-label">${STATUS_TEXT[segment.status] || '待处理'}</span></div>
   </article>`;
 }
 
-function inlineDiff(segmentId, target) {
-  return `<div class="inline-diff"><div class="inline-diff-label">AI 原译 → 当前编辑</div>
-    <div class="inline-diff-content" data-inline-diff="${segmentId}">${renderLiveDiff(segmentId, target)}</div></div>`;
+function currentTarget(state, project, segment, index, current, prompt) {
+  const target = current?.postEditText || current?.aiText || '';
+  const aiVisible = hasVisibleAiPostEdit(state, current);
+  const draft = aiVisible ? store.getAiPostEditDraft(segment.id) : null;
+  const aiEditing = Boolean(draft?.active);
+  const editor = aiVisible && !aiEditing
+    ? renderAiPostEditField(project, segment, index, current)
+    : renderTargetTextarea(segment, index, draft?.text ?? target, aiEditing);
+  const draftText = aiEditing ? draft.text : undefined;
+  const diff = state.diffMode
+    ? currentTargetDiff(current, target, project.direction, segment.id, aiVisible, draftText) : '';
+  return `${editor}${diff}${currentTargetActions(segment, current, prompt, aiVisible, aiEditing)}`;
+}
+
+function currentTargetDiff(translation, target, direction, segmentId, aiVisible, draftText) {
+  if (aiVisible) return aiPostEditHumanDiffBlock(translation, direction, draftText, segmentId);
+  return translationDiff(translation, target, direction, segmentId);
+}
+function renderTargetTextarea(segment, index, target, isAiDraft = false) {
+  const draftAttribute = isAiDraft ? ' data-ai-post-edit-draft="true"' : '';
+  return `<textarea class="target-editor" data-segment-editor="${segment.id}"${draftAttribute} aria-label="第 ${index + 1} 句译文"
+    placeholder="尚无译文，请模拟生成">${escapeHtml(target)}</textarea>`;
+}
+
+function currentTargetActions(segment, translation, prompt, aiVisible, aiEditing) {
+  const index = segment.translations.indexOf(translation) + 1;
+  const label = translation?.aiPostEdit ? `T${index}-AI`
+    : (isManualTranslation(translation) ? '人工参考' : promptLabel(prompt));
+  const actions = aiVisible && !aiEditing ? renderAiPostEditActions(segment, translation) : `<span class="target-action-buttons">
+    <button class="save-segment-button" data-action="save-segment" data-segment-id="${segment.id}">保存译后编辑</button>
+    <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation?.id || ''}">更多</button></span>`;
+  return `<div class="target-actions"><button class="version-button" data-action="open-versions" data-segment-id="${segment.id}">${displayedVersionCount(segment)} 个版本 · ${label}</button>${actions}</div>`;
+}
+function displayedVersionCount(segment) {
+  return segment.translations.length + segment.translations.filter(hasPairedAiVersion).length;
+}
+function renderAiPostEditActions(segment, translation) {
+  return `<span class="ai-post-edit-actions">
+    <button class="save-segment-button" data-action="edit-ai-post-edit" data-segment-id="${segment.id}" title="Ctrl+Enter">继续编辑</button>
+    <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation?.id || ''}">更多</button>
+  </span>`;
+}
+
+function allVersionTargets(state, project, segment, index) {
+  if (!segment.translations.length) return '<div class="empty-state">尚无译文版本</div>';
+  const versions = [...segment.translations].sort((left, right) => {
+    const currentOrder = Number(right.id === segment.currentTranslationId) - Number(left.id === segment.currentTranslationId);
+    return currentOrder || segment.translations.indexOf(right) - segment.translations.indexOf(left);
+  });
+  const cards = versions.map((translation) => {
+    const aiVersion = translation.aiPostEdit
+      ? aiPostEditVersionTarget(project, segment, index, translation) : '';
+    if (translation.serverVersionKind === 'ai_post_edit') return aiVersion;
+    const regular = versionTarget(state, project, segment, index, translation);
+    if (!aiVersion) return regular;
+    return translation.id === segment.currentTranslationId
+      ? `${aiVersion}${regular}` : `${regular}${aiVersion}`;
+  }).join('');
+  return `<div class="all-versions-group" aria-label="第 ${index + 1} 句全部译文版本">${cards}</div>`;
+}
+function versionTarget(state, project, segment, index, translation) {
+  const isSelectedBase = translation.id === segment.currentTranslationId;
+  const hasAiVersion = hasPairedAiVersion(translation);
+  const isCurrent = isSelectedBase && !hasAiVersion;
+  const translationIndex = segment.translations.indexOf(translation) + 1;
+  const prompt = store.getPrompt(translation.promptId);
+  const target = hasAiVersion ? translation.aiText : (translation.postEditText || translation.aiText || '');
+  const editor = versionEditor(segment, index, target, isCurrent);
+  const diff = state.diffMode && !hasAiVersion
+    ? translationDiff(translation, target, project.direction, isCurrent ? segment.id : '') : '';
+  return `<section class="embedded-version ${isCurrent ? 'is-current' : ''}">
+    <div class="embedded-version-header"><strong>译文 T${translationIndex} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${isCurrent ? '当前版本' : translation.createdAt}</span></div>
+    ${editor}${diff}${versionActions(segment, translation, isCurrent, hasAiVersion)}
+  </section>`;
+}
+
+function versionEditor(segment, index, target, isCurrent) {
+  if (!isCurrent) {
+    return `<div class="embedded-version-text" aria-label="第 ${index + 1} 句译文">${escapeHtml(target)}</div>`;
+  }
+  return renderTargetTextarea(segment, index, target);
+}
+
+function versionActions(segment, translation, isCurrent, hasAiVersion) {
+  if (hasAiVersion) return originalVersionActions(segment, translation);
+  if (isCurrent) return `<div class="target-actions"><span class="version-current-label">当前显示</span>
+    <span class="target-action-buttons"><button class="save-segment-button" data-action="save-segment" data-segment-id="${segment.id}">保存译后编辑</button>
+      <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation.id}">更多</button></span></div>`;
+  return `<div class="target-actions"><span class="version-history-label">历史版本</span>
+    <span class="target-action-buttons"><button class="text-button set-current-button" data-action="set-current-version" data-segment-id="${segment.id}" data-translation-id="${translation.id}">设为当前显示</button>
+      <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation.id}">更多</button></span></div>`;
+}
+
+function originalVersionActions(segment, translation) {
+  return `<div class="target-actions"><span class="version-history-label">原始版本</span>
+    <span class="target-action-buttons"><button class="text-button set-current-button" data-action="discard-ai-post-edit" data-segment-id="${segment.id}" data-translation-id="${translation.id}">设为当前显示</button>
+      <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation.id}">更多</button></span></div>`;
+}
+
+function aiPostEditVersionTarget(project, segment, index, translation) {
+  const isCurrent = translation.id === segment.currentTranslationId;
+  const translationIndex = segment.translations.indexOf(translation) + 1;
+  const draft = isCurrent ? store.getAiPostEditDraft(segment.id) : null;
+  const aiEditing = Boolean(draft?.active);
+  const editor = aiVersionEditor(project, segment, index, translation, isCurrent, draft);
+  const humanOverride = aiEditing ? draft.text : undefined;
+  const actions = aiVersionActions(segment, translation, isCurrent, aiEditing);
+  return `<section class="embedded-version is-ai-post-edit-version ${isCurrent ? 'is-current' : ''}">
+    <div class="embedded-version-header"><strong>AI 译后编辑版本 · T${translationIndex}-AI</strong><span>${isCurrent ? '当前版本' : translation.aiPostEdit.createdAt}</span></div>
+    ${editor}${aiPostEditDiffChain(translation, project.direction, humanOverride, isCurrent ? segment.id : '')}
+    ${actions}
+  </section>`;
+}
+
+function aiVersionEditor(project, segment, index, translation, isCurrent, draft) {
+  if (draft?.active) return renderTargetTextarea(segment, index, draft.text, true);
+  if (isCurrent) return renderAiPostEditField(project, segment, index, translation);
+  const aiEdited = resolvedAiPostEditText(translation, project.direction);
+  const displayText = translation.postEditText || aiEdited;
+  return `<div class="embedded-version-text" aria-label="第 ${index + 1} 句 AI 译后编辑版本">${escapeHtml(displayText)}</div>`;
+}
+
+function aiVersionActions(segment, translation, isCurrent, aiEditing) {
+  if (isCurrent) {
+    const buttons = aiEditing ? aiPostEditDraftActions(segment, translation) : renderAiPostEditActions(segment, translation);
+    return `<div class="target-actions"><span class="version-current-label">当前显示</span>${buttons}</div>`;
+  }
+  return `<div class="target-actions"><span class="version-history-label">历史版本</span>
+    <span class="target-action-buttons"><button class="text-button set-current-button" data-action="set-current-version" data-segment-id="${segment.id}" data-translation-id="${translation.id}">设为当前显示</button>
+      <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation.id}">更多</button></span></div>`;
+}
+function aiPostEditDraftActions(segment, translation) {
+  return `<span class="target-action-buttons"><button class="save-segment-button" data-action="save-segment" data-segment-id="${segment.id}">保存译后编辑</button>
+    <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation.id}">更多</button></span>`;
+}
+
+function aiPostEditDiffChain(translation, direction, humanOverride, liveSegmentId = '') {
+  const aiEdited = resolvedAiPostEditText(translation, direction);
+  const aiDiff = renderDiffBlock(
+    'AI → AI编辑 Diff', translation.aiPostEdit.baseText, aiEdited, direction,
+    'AI 编辑结果与原译一致', '', 'ai-edit',
+  );
+  const humanDiff = aiPostEditHumanDiffBlock(translation, direction, humanOverride, liveSegmentId);
+  return `<div class="ai-post-edit-diff-chain">${aiDiff}${humanDiff}</div>`;
+}
+
+function aiPostEditHumanDiffBlock(translation, direction, humanOverride, liveSegmentId = '') {
+  const aiEdited = resolvedAiPostEditText(translation, direction);
+  const humanText = humanOverride !== undefined ? humanOverride : (translation.postEditText || aiEdited);
+  return renderDiffBlock(
+    'AI编辑Diff → 人工 Diff', aiEdited, humanText, direction, '尚无额外人工修改', liveSegmentId,
+  );
+}
+function resolvedAiPostEditText(translation, direction) {
+  const edit = translation.aiPostEdit;
+  if (edit.status === 'applied' && typeof edit.resultText === 'string') return edit.resultText;
+  return resolveAiPostEdit(edit, direction, true);
+}
+
+function renderDiffBlock(label, before, after, direction, unchanged, liveSegmentId = '', theme = '') {
+  const attribute = liveSegmentId ? ` data-ai-human-diff="${escapeHtml(liveSegmentId)}"` : '';
+  const themeClass = theme === 'ai-edit' ? ' is-ai-edit-diff' : '';
+  const content = renderDiffContent(before, after, direction, unchanged);
+  return `<div class="inline-diff${themeClass}"><div class="inline-diff-label">${label}</div><div class="inline-diff-content"${attribute}>${content}</div></div>`;
+}
+function renderDiffContent(before, after, direction, unchanged) {
+  const language = direction === 'EN → ZH' ? 'zh' : 'en';
+  const parts = buildDiff(before || '', after || '', language);
+  if (parts.every((part) => part.type === 'same')) return `<span class="diff-unchanged">${unchanged}</span>`;
+  return renderDiffParts(parts);
+}
+
+export function renderAiHumanDiff(segmentId, editedText) {
+  const project = store.getProject();
+  const translation = store.getCurrentTranslation(store.getSegment(segmentId));
+  if (!translation?.aiPostEdit) return '<span class="muted">尚无 AI 译后编辑可比较</span>';
+  const aiEdited = resolvedAiPostEditText(translation, project.direction);
+  return renderDiffContent(aiEdited, editedText, project.direction, '尚无额外人工修改');
+}
+function translationDiff(translation, target, direction, liveSegmentId = '') {
+  const attribute = liveSegmentId ? ` data-inline-diff="${liveSegmentId}"` : '';
+  if (isManualTranslation(translation)) return `<div class="inline-diff"><div class="inline-diff-label">译文来源</div>
+    <div class="inline-diff-content"${attribute}>人工参考译文，不适用 AI → 人工 Diff。</div></div>`;
+  const baseline = humanDiffBaseline(translation);
+  return `<div class="inline-diff"><div class="inline-diff-label">${baseline.label}</div>
+    <div class="inline-diff-content"${attribute}>${renderTranslationDiff(translation, target, direction)}</div></div>`;
+}
+
+function humanDiffBaseline(translation) {
+  if (translation?.serverBaselineKind === 'ai_post_edit') {
+    return { text: translation.aiText || '', label: 'AI 译后编辑 → 当前人工编辑',
+      unchanged: '与 AI 译后编辑一致' };
+  }
+  const edit = translation?.aiPostEdit;
+  if (edit?.status === 'applied') {
+    return { text: edit.resultText, label: 'AI 译后编辑 → 当前人工编辑', unchanged: '与 AI 译后编辑一致' };
+  }
+  return { text: translation?.aiText || '', label: 'AI 原译 → 当前人工编辑', unchanged: '与 AI 原译一致' };
+}
+
+function renderTranslationDiff(translation, editedText, direction) {
+  if (!translation) return '<span class="muted">尚无译文可比较</span>';
+  const language = direction === 'EN → ZH' ? 'zh' : 'en';
+  const baseline = humanDiffBaseline(translation);
+  const parts = buildDiff(baseline.text, editedText, language);
+  if (parts.every((part) => part.type === 'same')) return `<span class="diff-unchanged">${baseline.unchanged}</span>`;
+  return renderDiffParts(parts);
 }
 
 export function renderLiveDiff(segmentId, editedText) {
   const project = store.getProject();
-  const segment = store.getSegment(segmentId);
-  const current = store.getCurrentTranslation(segment);
-  if (!current) return '<span class="muted">尚无译文可比较</span>';
-  const language = project.direction === 'EN → ZH' ? 'zh' : 'en';
-  const parts = buildDiff(current.aiText, editedText, language);
-  if (parts.every((part) => part.type === 'same')) return '<span class="diff-unchanged">与 AI 原译一致</span>';
-  return renderDiffParts(parts);
+  const current = store.getCurrentTranslation(store.getSegment(segmentId));
+  return renderTranslationDiff(current, editedText, project.direction);
 }
 
 export function renderDiffParts(parts) {
@@ -146,10 +396,10 @@ export function renderDiffParts(parts) {
     return `<span class="${className}">${escapeHtml(part.value)}</span>`;
   }).join('');
 }
-
 function statusIcon(status) {
   if (status === 'reviewed') return '✓';
   if (status === 'edited') return '✎';
+  if (status === 'ai-edited') return '✦';
   if (status === 'translated') return 'AI';
   return '–';
 }
@@ -170,44 +420,63 @@ function renderRightPanel(state, project) {
 
 function renderPromptPanel(project) {
   const segment = store.getSegment();
-  const translation = store.getCurrentTranslation(segment);
+  const translation = store.getDetailTranslation(segment);
   if (!translation) return renderProjectPrompt(project);
   const prompt = project.prompts.find((item) => item.id === translation.promptId);
   const translationIndex = segment.translations.indexOf(translation) + 1;
   const segmentIndex = project.segments.indexOf(segment) + 1;
-  return `<div class="panel-kicker">SELECTED TRANSLATION</div><h2 class="panel-title">当前译文 T${translationIndex}</h2>
+  return `<div class="panel-kicker">SELECTED TRANSLATION</div><h2 class="panel-title">译文详情 T${translationIndex}</h2>
     ${translationMeta(project, segmentIndex, translationIndex, translation, prompt)}
-    <div class="translation-detail-card"><div class="detail-label">当前显示译文</div><p>${escapeHtml(translation.postEditText || translation.aiText)}</p></div>
-    <div class="detail-label">绑定的 Prompt 快照</div>
+    <div class="translation-detail-card"><div class="detail-label">所选译文</div><p>${escapeHtml(translation.postEditText || translation.aiText)}</p></div>
+    ${renderTranslationOrigin(project, segment, translation, prompt)}`;
+}
+
+function renderTranslationOrigin(project, segment, translation, prompt) {
+  if (isManualTranslation(translation)) return `<div class="manual-translation-note"><strong>人工参考译文</strong>
+    <p>此版本由用户手动翻译，不绑定任何 Prompt。</p></div>`;
+  return `<div class="detail-label">绑定的 Prompt 快照</div>
     <textarea id="prompt-editor" class="prompt-editor" aria-label="绑定的 Prompt 快照">${escapeHtml(translation.promptSnapshot || prompt?.content || '')}</textarea>
-    <p class="muted detail-note">这是该译文生成时冻结的快照。当前项目用于新生成的版本是 Prompt v${activePromptVersion(project)}。</p>
-    <button class="button button-primary button-full" data-action="new-prompt-from-editor">基于此快照创建新 Prompt</button>`;
+    <p class="muted detail-note">这是该译文生成时冻结的快照。当前项目用于新生成的版本是 Prompt ${activePromptVersion(project)}。</p>
+    <div class="prompt-action-stack"><button class="button button-secondary button-full" data-action="retranslate-with-prompt" data-segment-id="${segment.id}">用此 Prompt 重译</button>
+      ${segment.currentTranslationId === translation.id ? `<button class="button button-secondary button-full" data-action="ai-post-edit-current" data-segment-id="${segment.id}" data-prompt-id="${prompt?.id || ''}">用此 Prompt AI 译后编辑</button>` : ''}
+      <button class="button button-primary button-full" data-action="new-prompt-from-editor">基于此快照创建新 Prompt</button></div>`;
 }
 
 function translationMeta(project, segmentIndex, translationIndex, translation, prompt) {
-  const edited = translation.postEditText ? `已译后编辑 · ${escapeHtml(translation.editedAt || '已保存')}` : 'AI 原译 · 尚未人工修改';
   return `<div class="prompt-meta-card"><dl>
     <div class="meta-row"><dt>当前选择</dt><dd>句段 ${segmentIndex} · 译文 T${translationIndex}</dd></div>
-    <div class="meta-row"><dt>绑定 Prompt</dt><dd>v${prompt?.version || '?'} · ${escapeHtml(prompt?.title || '历史快照')}</dd></div>
-    <div class="meta-row"><dt>译文状态</dt><dd>${edited}</dd></div>
+    <div class="meta-row"><dt>绑定 Prompt</dt><dd>${isManualTranslation(translation) ? '无 Prompt · 用户手动翻译' : `${escapeHtml(promptLabel(prompt))} · ${escapeHtml(prompt?.title || '历史快照')}`}</dd></div>
+    <div class="meta-row"><dt>译文状态</dt><dd>${translationStatus(translation)}</dd></div>
     <div class="meta-row"><dt>生成信息</dt><dd>${escapeHtml(translation.author)} · ${escapeHtml(translation.model)}</dd></div>
     <div class="meta-row"><dt>生成时间</dt><dd>${escapeHtml(translation.createdAt)}</dd></div>
     <div class="meta-row"><dt>上下文</dt><dd>${escapeHtml(translation.contextSnapshot)}</dd></div>
   </dl></div>`;
 }
 
+function translationStatus(translation) {
+  const edit = translation.aiPostEdit;
+  if (edit?.status === 'pending') return `AI 已编辑 · 待逐项确认 · ${escapeHtml(edit.createdAt)}`;
+  if (edit?.status === 'applied' && !edit.humanContinuedAt) return `AI 已编辑 · ${escapeHtml(edit.appliedAt)}`;
+  if (translation.postEditText) return `已人工编辑 · ${escapeHtml(translation.editedAt || '已保存')}`;
+  return isManualTranslation(translation) ? '人工译文 · 未改动' : 'AI 原译 · 尚未人工修改';
+}
+
 function activePromptVersion(project) {
-  return project.prompts.find((item) => item.id === project.activePromptId)?.version || '?';
+  return promptLabel(project.prompts.find((item) => item.id === project.activePromptId));
 }
 
 function renderProjectPrompt(project) {
   const prompt = project.prompts.find((item) => item.id === project.activePromptId);
   return `<div class="panel-kicker">PROMPT STUDIO</div><h2 class="panel-title">项目翻译指令</h2>
-    <div class="prompt-meta-card"><dl><div class="meta-row"><dt>当前版本</dt><dd>v${prompt.version} · ${escapeHtml(prompt.title)}</dd></div>
+    <div class="prompt-meta-card"><dl><div class="meta-row"><dt>当前版本</dt><dd>${escapeHtml(promptLabel(prompt))} · ${escapeHtml(prompt.title)}</dd></div>
       <div class="meta-row"><dt>共同作者</dt><dd>${escapeHtml(prompt.author)}（${escapeHtml(prompt.role)}）</dd></div>
       <div class="meta-row"><dt>版本说明</dt><dd>${escapeHtml(prompt.note)}</dd></div></dl></div>
     <textarea id="prompt-editor" class="prompt-editor" aria-label="当前 Prompt 内容">${escapeHtml(prompt.content)}</textarea>
-    <button class="button button-primary button-full" data-action="new-prompt-from-editor">由此创建新版本</button>`;
+    <div class="prompt-action-stack">
+      <button class="button button-secondary button-full" data-action="retranslate-with-prompt" data-segment-id="${store.getSegment()?.id || ''}">用此 Prompt 重译</button>
+      <button class="button button-secondary button-full" data-action="ai-post-edit-current" data-segment-id="${store.getSegment()?.id || ''}" data-prompt-id="${prompt.id}">用此 Prompt AI 译后编辑</button>
+      <button class="button button-primary button-full" data-action="new-prompt-from-editor">由此创建新版本</button>
+    </div>`;
 }
 
 function renderTermsPanel(project) {
@@ -215,7 +484,7 @@ function renderTermsPanel(project) {
     <div class="resource-row"><strong>${escapeHtml(term.source)}</strong><span>→</span><strong>${escapeHtml(term.target)}</strong></div>
     <p>${escapeHtml(term.note || '项目统一译法')}</p></div>`).join('');
   return `<div class="panel-heading"><div><div class="panel-kicker">TERMBASE</div><h2 class="panel-title">项目术语库</h2></div><button class="icon-button" data-action="add-term">＋</button></div>
-    <p class="muted" style="font-size:10px">命中术语将在未来的完整 Prompt 中自动注入，并保留来源。</p>${cards || '<div class="empty-state">尚未添加术语</div>'}`;
+    <p class="muted" style="font-size:10px">服务器版生成时会把已批准术语注入模型上下文，并保留来源。</p>${cards || '<div class="empty-state">尚未添加术语</div>'}`;
 }
 
 function renderTmPanel(project) {
@@ -226,16 +495,50 @@ function renderTmPanel(project) {
     <p class="muted" style="font-size:10px">当前为浏览器端预存匹配结果，未来可替换为 TMX 检索服务。</p>${cards || '<div class="empty-state">尚无翻译记忆</div>'}`;
 }
 
-function renderMentorPanel() {
+function renderMentorPanel(project) {
+  const analysis = analyzePromptCoach(project);
+  const cards = analysis.rules.map(renderCoachRule).join('');
+  const summary = `已从 ${analysis.totalCount} 条 T2 中读取 ${analysis.editedCount} 组 AI 原译 → 人工编辑 Diff。`;
   return `<div class="panel-kicker">POST-EDIT LEARNING</div><h2 class="panel-title">AI Prompt 教练</h2>
-    <div class="mentor-card"><span class="mentor-demo-label">ROADSHOW PLACEHOLDER</span>
-      <h3>从译后编辑反推 Prompt 补丁</h3>
-      <p class="muted" style="line-height:1.65">演示设想：系统汇总多句稳定修改后，指出“学生反复拆分长句、弱化宣传式措辞”，并建议给 Prompt 增加相应规则。</p>
-      <div class="prompt-snapshot">建议补丁示例：允许拆分英文长句；涉及展览价值判断时保持克制，不主动使用“非凡、震撼、独一无二”等宣传性表达。</div>
-      <button class="button button-soft button-full" data-action="mentor-demo" style="margin-top:12px">预览未来工作流</button>
-    </div><p class="muted" style="font-size:10px">当前入口只展示模拟建议，不会分析真实编辑，也不会自动改写 Prompt。</p>`;
+    <div class="coach-mode"><span>本地分析 · 未调用 API</span><strong>Diff 成对学习</strong></div>
+    <p class="coach-scope">${summary}<br>仅分析句界、谓语、施事、逻辑层级、回指和引语边界；术语差异不计入规则。</p>
+    <div class="coach-rule-list">${cards || '<div class="empty-state">暂未发现可稳定归纳的句子结构规则。</div>'}</div>
+    <div class="coach-actions">
+      ${cards ? '<button class="button button-primary button-full" data-action="apply-coach-rules">将已选规则加入 Prompt 草稿</button>' : ''}
+      ${analysis.editedCount ? '<button class="button button-soft button-full" data-action="download-coach-json">下载教练结果 JSON</button>' : ''}
+      <button class="button button-soft button-full" data-action="download-post-edit-json">导出全部译后编辑 JSON</button>
+    </div>
+    <p class="coach-footnote">建议会先进入草稿供师生修改，只有发布后才创建新的 Prompt 版本。</p>`;
+}
+
+function renderCoachRule(rule, index) {
+  const evidence = rule.evidence.map(renderCoachEvidence).join('');
+  return `<article class="coach-rule">
+    <label class="coach-rule-select"><input type="checkbox" data-coach-rule="${escapeHtml(rule.id)}" checked>
+      <span><small>规则 ${index + 1}</small><strong>${escapeHtml(rule.title)}</strong></span></label>
+    <p>${escapeHtml(rule.instruction)}</p>
+    <details class="coach-evidence"><summary>查看结构依据 · ${rule.evidence.length} 处</summary>${evidence}</details>
+  </article>`;
+}
+
+function renderCoachEvidence(item) {
+  const hasDiff = item.diff.some((part) => part.type !== 'same');
+  if (!hasDiff) return '';
+  return `<div class="coach-evidence-item"><strong>${escapeHtml(item.label)} · ${escapeHtml(item.signal)}</strong>
+    <div class="coach-evidence-diff" aria-label="T2 AI 原译到人工编辑 Diff">${renderDiffParts(item.diff)}</div></div>`;
 }
 
 function renderStatus(state) {
-  document.querySelector('#current-user-status').textContent = state.role === 'teacher' ? '当前：林老师（教师）' : '当前：当前学生（学生）';
+  const segment = store.getSegment();
+  const project = store.getProject();
+  let saveText = segment?.status === 'ai-edited'
+    ? 'AI已编辑 · 建议与决策已保存在本机' : '所有更改保存在本机';
+  if (state.serverMode) {
+    saveText = project.editable
+      ? '服务器已连接 · 点击“保存译后编辑”才写入'
+      : '只读系统模板 · 发布并分配后可编辑';
+  }
+  document.querySelector('#save-status').textContent = saveText;
+  document.querySelector('#current-user-status').textContent = document.body.dataset.authLabel
+    || (state.role === 'teacher' ? '当前：林老师（教师）' : '当前：当前学生（学生）');
 }

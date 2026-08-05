@@ -1,0 +1,36 @@
+{
+  "name": "translation-aiducator",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server/src/main.ts",
+    "start": "node dist/server/src/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-isolation=none dist/server/tests/backend.test.js dist/server/tests/document-import.test.js scripts/tests/segmenter.test.js scripts/tests/project-export.test.js",
+    "db:migrate": "npm run build --silent && node dist/server/src/cli.js db:migrate",
+    "db:deploy": "npm run build --silent && node dist/server/src/cli.js db:deploy",
+    "db:status": "npm run build --silent && node dist/server/src/cli.js db:status",
+    "db:backup": "npm run build --silent && node dist/server/src/cli.js db:backup",
+    "db:seed-demo": "npm run build --silent && node dist/server/src/cli.js db:seed-demo",
+    "admin:init": "npm run build --silent && node dist/server/src/cli.js admin:init",
+    "admin:reset-password": "npm run build --silent && node dist/server/src/cli.js admin:reset-password"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/multipart": "10.1.0",
+    "@fastify/static": "10.1.2",
+    "argon2": "0.45.1",
+    "better-sqlite3": "13.0.2",
+    "fastify": "5.11.2",
+    "mammoth": "1.12.0",
+    "pdf-parse": "2.4.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.1.2",
+    "tsx": "4.23.5",
+    "typescript": "7.0.2"
+  }
+}

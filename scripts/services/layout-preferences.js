@@ -1,18 +1,25 @@
 /**
- * 职责: 管理三栏拖拽宽度、独立内容缩放与本地偏好持久化
+ * 职责: 管理三栏显示、拖拽宽度、独立内容缩放与本地偏好持久化
  * 依赖内部: 无
  * 依赖外部: DOM API, localStorage
- * 暴露: initLayoutPreferences | getLayoutPreferences
+ * 暴露: initLayoutPreferences | getLayoutPreferences | setPaneVisibility | togglePaneVisibility | resetLayoutPreferences
  */
 
 const STORAGE_KEY = 'translation-aiducator-layout-v1';
-const DEFAULTS = { widths: { left: 260, right: 340 }, zoom: { left: 1, center: 1, right: 1 } };
+const DEFAULTS = {
+  widths: { left: 260, right: 340 },
+  zoom: { left: 1, center: 1, right: 1 },
+  visibility: { left: false, right: false },
+};
 const LIMITS = { left: 190, right: 250, center: 480, zoomMin: 0.75, zoomMax: 1.5 };
 const PANE_LABELS = { left: '左栏', center: '中央栏', right: '右栏' };
 let preferences = loadPreferences();
 let activePane = 'center';
 let dragState = null;
 let persistTimer = null;
+let announceTimer = null;
+let announcementText = '';
+let statusBeforeAnnouncement = '';
 let initialized = false;
 
 function loadPreferences() {
@@ -35,6 +42,10 @@ function sanitizePreferences(saved) {
       left: sanitizeZoom(saved.zoom?.left),
       center: sanitizeZoom(saved.zoom?.center),
       right: sanitizeZoom(saved.zoom?.right),
+    },
+    visibility: {
+      left: saved.visibility?.left === true,
+      right: saved.visibility?.right === true,
     },
   };
 }
@@ -64,7 +75,19 @@ function applyWidths() {
 }
 
 function fitWidths(workspace) {
-  const maximum = workspace.getBoundingClientRect().width - LIMITS.center - 12;
+  const visibleSides = ['left', 'right'].filter((side) => preferences.visibility[side]);
+  if (!visibleSides.length) return;
+  const handlesWidth = visibleSides.length * 6;
+  const maximum = workspace.getBoundingClientRect().width - LIMITS.center - handlesWidth;
+  if (visibleSides.length === 1) return fitSingleWidth(visibleSides[0], maximum);
+  fitBothWidths(maximum);
+}
+
+function fitSingleWidth(side, maximum) {
+  preferences.widths[side] = clamp(preferences.widths[side], LIMITS[side], maximum);
+}
+
+function fitBothWidths(maximum) {
   const overflow = preferences.widths.left + preferences.widths.right - maximum;
   if (overflow <= 0) return;
   preferences.widths.left = Math.max(LIMITS.left, preferences.widths.left - overflow / 2);
@@ -76,7 +99,24 @@ function applyZoom(paneName) {
   pane?.style.setProperty('--pane-zoom', preferences.zoom[paneName]);
 }
 
+function applyVisibility() {
+  const workspace = document.querySelector('.workspace');
+  ['left', 'right'].forEach((side) => applySideVisibility(workspace, side));
+}
+
+function applySideVisibility(workspace, side) {
+  const visible = preferences.visibility[side];
+  workspace.classList.toggle(`is-${side}-hidden`, !visible);
+  document.querySelectorAll(`[data-pane-target="${side}"]`).forEach((button) => {
+    button.setAttribute('aria-pressed', String(visible));
+  });
+  document.querySelectorAll(`[data-pane-check="${side}"]`).forEach((check) => {
+    check.classList.toggle('is-visible', visible);
+  });
+}
+
 function applyPreferences() {
+  applyVisibility();
   applyWidths();
   Object.keys(preferences.zoom).forEach(applyZoom);
   focusPane(activePane, false);
@@ -137,13 +177,11 @@ function moveDrag(event) {
 }
 
 function updateDraggedWidth(side, pointerX, rect) {
-  if (side === 'left') {
-    const maximum = rect.width - preferences.widths.right - LIMITS.center - 12;
-    preferences.widths.left = clamp(pointerX - rect.left, LIMITS.left, maximum);
-    return;
-  }
-  const maximum = rect.width - preferences.widths.left - LIMITS.center - 12;
-  preferences.widths.right = clamp(rect.right - pointerX, LIMITS.right, maximum);
+  const otherSide = side === 'left' ? 'right' : 'left';
+  const otherWidth = preferences.visibility[otherSide] ? preferences.widths[otherSide] + 6 : 0;
+  const maximum = rect.width - otherWidth - LIMITS.center - 6;
+  const proposed = side === 'left' ? pointerX - rect.left : rect.right - pointerX;
+  preferences.widths[side] = clamp(proposed, LIMITS[side], maximum);
 }
 
 function finishDrag(event = {}) {
@@ -193,8 +231,43 @@ function bindPaneControls() {
 function announce(message) {
   const status = document.querySelector('#save-status');
   if (!status) return;
+  if (announceTimer === null || status.textContent !== announcementText) {
+    statusBeforeAnnouncement = status.textContent;
+  }
+  window.clearTimeout(announceTimer);
+  announcementText = message;
   status.textContent = message;
-  window.setTimeout(() => { status.textContent = '所有更改保存在本机'; }, 1800);
+  announceTimer = window.setTimeout(() => restoreStatus(status, message), 1800);
+}
+
+function restoreStatus(status, message) {
+  if (status.textContent === message) status.textContent = statusBeforeAnnouncement;
+  announceTimer = null;
+  announcementText = '';
+  statusBeforeAnnouncement = '';
+}
+
+export function setPaneVisibility(side, visible) {
+  if (!['left', 'right'].includes(side)) return;
+  preferences.visibility[side] = Boolean(visible);
+  if (!preferences.visibility[side] && activePane === side) focusPane('center', false);
+  applyVisibility();
+  applyWidths();
+  persistPreferences();
+  announce(`${PANE_LABELS[side]}已${preferences.visibility[side] ? '显示' : '隐藏'}。`);
+}
+
+export function togglePaneVisibility(side) {
+  if (!['left', 'right'].includes(side)) return;
+  setPaneVisibility(side, !preferences.visibility[side]);
+}
+
+export function resetLayoutPreferences() {
+  preferences = structuredClone(DEFAULTS);
+  activePane = 'center';
+  applyPreferences();
+  persistPreferences();
+  announce('已恢复默认显示，仅保留中央编辑器。');
 }
 
 export function initLayoutPreferences() {

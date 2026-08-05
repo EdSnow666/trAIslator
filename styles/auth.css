@@ -1,0 +1,83 @@
+/*
+ * 职责: 登录门禁、首次改密和真实用户身份组件样式
+ * 依赖内部: base.css
+ * 依赖外部: 无
+ * 暴露: auth-gate | auth-card | signed-in-user
+ */
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(246 244 239 / 96%);
+  backdrop-filter: blur(8px);
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-brand {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 22px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--accent);
+  color: white;
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.auth-card h1 {
+  margin-bottom: 8px;
+  font-size: 23px;
+}
+
+.auth-fields {
+  display: grid;
+  gap: 15px;
+  margin: 24px 0 12px;
+}
+
+.auth-fields label {
+  display: grid;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-weight: 650;
+}
+
+.auth-error {
+  min-height: 20px;
+  margin: 8px 0;
+  color: var(--accent-dark);
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.signed-in-user {
+  display: grid;
+  min-width: 88px;
+  text-align: right;
+}
+
+.signed-in-user span {
+  font-weight: 700;
+}
+
+.signed-in-user small {
+  color: var(--ink-soft);
+}

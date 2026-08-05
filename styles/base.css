@@ -197,3 +197,13 @@ p {
   color: #865f12;
   letter-spacing: 0.08em;
 }
+
+.badge-project-origin {
+  background: #edf6f2;
+  color: #26705b;
+}
+
+.badge-project-class {
+  background: var(--navy-soft);
+  color: var(--navy);
+}

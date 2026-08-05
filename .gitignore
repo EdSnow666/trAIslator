@@ -1,10 +1,14 @@
 # 本机配置与密钥
 .env
 .env.*
+!.env.example
 *.local
 
 # 依赖与日志
 node_modules/
+dist/
+data/
+backups/
 *.log
 
 # 实验与测试产物

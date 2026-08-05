@@ -1,32 +1,36 @@
 /**
- * 职责: 对英中教学文本进行轻量规则分句并创建新项目句段
+ * 职责: 按段落切分英中教学文本并创建导入项目
  * 依赖内部: 无
  * 依赖外部: 无
- * 暴露: segmentText | buildImportedProject
+ * 暴露: segmentParagraphs | segmentText | buildImportedProject
  */
 
-const EN_ABBREVIATIONS = ['Mr.', 'Mrs.', 'Dr.', 'Prof.', 'e.g.', 'i.e.', 'No.'];
-
-function protectAbbreviations(text) {
-  return EN_ABBREVIATIONS.reduce(
-    (result, item) => result.replaceAll(item, item.replaceAll('.', '<DOT>')),
-    text,
-  );
+function joinParagraphLines(lines) {
+  return lines.reduce((result, line) => {
+    const clean = line.trim();
+    if (!clean) return result;
+    if (!result) return clean;
+    if (result.endsWith('-')) return result.slice(0, -1) + clean;
+    if (/\p{Script=Han}$/u.test(result) && /^\p{Script=Han}/u.test(clean)) return result + clean;
+    return result + ' ' + clean;
+  }, '');
 }
 
-export function segmentText(text, direction) {
-  const normalized = text.replace(/\r\n/g, '\n').trim();
+export function segmentParagraphs(text) {
+  const normalized = text.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
-  const protectedText = direction === 'EN → ZH' ? protectAbbreviations(normalized) : normalized;
-  const pattern = direction === 'EN → ZH' ? /(?<=[.!?])\s+|\n+/ : /(?<=[。！？；])|\n+/;
-  return protectedText.split(pattern)
-    .map((item) => item.replaceAll('<DOT>', '.').trim())
-    .filter(Boolean);
+  const blocks = normalized.split(/\n[ \t]*\n+/);
+  if (blocks.length > 1) {
+    return blocks.map((block) => joinParagraphLines(block.split('\n'))).filter(Boolean);
+  }
+  return normalized.split(/\n+/).map((item) => item.trim()).filter(Boolean);
 }
+
+export const segmentText = segmentParagraphs;
 
 export function buildImportedProject(name, direction, text) {
   const timestamp = Date.now();
-  const segments = segmentText(text, direction).map((source, index) => ({
+  const segments = segmentParagraphs(text).map((source, index) => ({
     id: `import-${timestamp}-${index + 1}`,
     source,
     status: 'empty',
@@ -50,6 +54,9 @@ function createImportedProject(name, direction, timestamp, segments) {
     segments,
     terms: [],
     tm: [],
+    isLocal: true,
+    classTags: [],
+    canManage: true,
   };
 }
 

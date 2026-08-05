@@ -1,0 +1,179 @@
+/* 职责: 以单元格底纹和文字级标记呈现 AI 译后编辑，不创建额外内框 */
+
+.target-cell.is-ai-post-editing {
+  background: #f5f9ff;
+}
+
+.target-cell.is-ai-post-editing.is-all-versions,
+.target-cell.is-ai-post-editing.is-all-versions .embedded-version.is-current {
+  background: var(--surface);
+}
+
+.embedded-version.is-ai-post-edit-version,
+.target-cell.is-ai-post-editing.is-all-versions .embedded-version.is-ai-post-edit-version.is-current {
+  background: #f5f9ff;
+}
+
+.embedded-version.is-ai-post-edit-version .embedded-version-header strong {
+  color: #2d67a5;
+}
+
+.version-card.is-ai-post-edit-version {
+  background: #f5f9ff;
+}
+
+.version-card.is-ai-post-edit-version .version-meta strong {
+  color: #2d67a5;
+}
+.version-diff.is-ai-edit-diff,
+.inline-diff.is-ai-edit-diff {
+  border-color: #c8d8ea;
+  background: #f5f9ff;
+}
+
+.version-diff.is-ai-edit-diff .version-diff-title,
+.inline-diff.is-ai-edit-diff .inline-diff-label {
+  color: #2d67a5;
+}
+
+.version-diff.is-ai-edit-diff .diff-added,
+.inline-diff.is-ai-edit-diff .diff-added {
+  background: rgba(57, 117, 188, 0.14);
+  color: #214f82;
+  text-decoration: underline dotted #3975bc 1px;
+  text-underline-offset: 3px;
+}
+
+.version-diff.is-ai-edit-diff .diff-removed,
+.inline-diff.is-ai-edit-diff .diff-removed {
+  background: rgba(226, 174, 54, 0.22);
+  color: #855b08;
+  text-decoration-color: #b47a12;
+}
+.ai-post-edit-text {
+  min-height: 76px;
+  color: var(--ink);
+  cursor: text;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.68;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.ai-change-wrap {
+  position: relative;
+  display: inline;
+}
+
+.ai-post-edit-text.is-en .ai-change-wrap.is-removed + .ai-change-wrap.is-added {
+  margin-left: 0.18em;
+}
+
+.ai-change-token {
+  display: inline;
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.ai-change-token.is-added {
+  background: rgba(57, 117, 188, 0.14);
+  color: #214f82;
+  text-decoration: underline dotted #3975bc 1px;
+  text-underline-offset: 3px;
+}
+
+.ai-change-token.is-removed {
+  background: rgba(226, 174, 54, 0.2);
+  color: #855b08;
+  text-decoration: line-through 1.5px #b47a12;
+}
+
+.ai-change-token.is-accepted {
+  background: rgba(49, 127, 199, 0.16);
+  color: #175b96;
+  text-decoration-color: #317fc7;
+}
+
+.ai-change-token.is-removed.is-accepted {
+  background: rgba(226, 174, 54, 0.24);
+  color: #794f00;
+  text-decoration-color: #a86f08;
+}
+
+.ai-change-token.is-rejected {
+  background: transparent;
+  color: #9a958b;
+  opacity: 0.62;
+}
+
+.ai-change-token.is-removed.is-rejected {
+  color: var(--ink);
+  opacity: 1;
+  text-decoration: none;
+}
+
+.ai-change-token.is-added.is-rejected {
+  text-decoration: line-through 1.5px;
+}
+
+.ai-change-token:hover,
+.ai-change-token:focus-visible {
+  outline: 2px solid rgba(57, 117, 188, 0.28);
+  outline-offset: 1px;
+}
+
+.ai-change-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  display: none;
+  width: max-content;
+  border: 1px solid #c8d8ea;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 7px 18px rgba(25, 66, 108, 0.16);
+  padding: 3px;
+}
+
+.ai-change-wrap.is-open .ai-change-menu {
+  display: flex;
+}
+
+.ai-change-menu button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
+.ai-change-menu button:hover {
+  background: #edf4fc;
+}
+
+.ai-post-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ai-post-edit-actions button {
+  white-space: nowrap;
+}
+
+.status-dot.ai-edited {
+  background: #3975bc;
+}
+
+.status-icon.ai-edited {
+  background: #e7f1fc;
+  color: #2d67a5;
+}

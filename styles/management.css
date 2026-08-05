@@ -1,0 +1,481 @@
+/*
+ * 职责: 教学管理、服务器模型、班级、项目、实验和活动审计样式
+ * 依赖内部: base.css, components.css
+ * 依赖外部: 无
+ * 暴露: management-modal | management-columns | management-experiment-layout | management-audit-panel | model-management-modal
+ */
+
+#management-menu[hidden],
+#management-button[hidden] {
+  display: none !important;
+}
+
+.management-modal {
+  display: grid;
+  width: min(1180px, 96vw);
+  height: min(820px, 92vh);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.management-modal .modal-header h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 24px;
+}
+
+.management-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 20px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.management-tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  padding: 10px 14px;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
+.management-tabs button.is-active {
+  border-bottom-color: var(--navy);
+  color: var(--navy);
+}
+
+.management-body {
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-soft);
+}
+
+.management-columns {
+  display: grid;
+  grid-template-columns: minmax(330px, 0.9fr) minmax(460px, 1.35fr);
+  gap: 18px;
+}
+
+.management-section-head,
+.management-panel-title,
+.management-project-row,
+.management-user-row,
+.management-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.management-section-head {
+  margin-bottom: 10px;
+}
+
+.management-section-head h3,
+.management-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.management-section-head span,
+.management-panel-title p,
+.management-project-row small,
+.management-user-row small,
+.management-member-row small {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.management-list {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.management-list-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 11px 12px;
+  color: var(--ink-soft);
+  text-align: left;
+}
+
+.management-list-card span:first-child,
+.management-project-row span:first-child,
+.management-user-row span:first-child,
+.management-member-row span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.management-list-card.is-active {
+  border-color: #9babc0;
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+
+.management-panel {
+  display: grid;
+  min-width: 0;
+  gap: 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 15px;
+}
+
+.management-panel label,
+.management-inline-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.management-members,
+.management-user-list {
+  display: grid;
+  max-height: 270px;
+  overflow: auto;
+}
+
+.management-member-row,
+.management-user-row,
+.management-project-row {
+  min-height: 50px;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 2px;
+}
+
+.management-member-row:last-child,
+.management-user-row:last-child,
+.management-project-row:last-child {
+  border-bottom: 0;
+}
+
+.management-member-row em,
+.management-user-row em,
+.management-project-row em {
+  color: var(--green);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.management-row-actions,
+.management-user-row > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.management-inline-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 110px auto;
+  align-items: end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.management-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.management-form-grid > [data-management-form="assign-project"] {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.management-project-creator {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.management-project-creator h3,
+.management-project-creator button {
+  grid-column: 1 / -1;
+}
+
+.management-panel .field {
+  width: 100%;
+  min-width: 0;
+}
+.management-form-grid .button,
+.management-account-layout form .button {
+  align-self: end;
+}
+
+.management-account-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.65fr) minmax(480px, 1.35fr);
+  gap: 16px;
+}
+
+.management-secret {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 18px;
+  margin-bottom: 14px;
+  border: 1px solid #ddc17f;
+  border-radius: 8px;
+  background: var(--amber-soft);
+  padding: 12px 14px;
+}
+
+.management-secret code {
+  user-select: all;
+  color: var(--navy);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.management-secret p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.management-loading {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  color: var(--ink-soft);
+}
+
+.management-modal .modal-footer {
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .management-columns,
+  .management-account-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .management-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .management-form-grid > [data-management-form="assign-project"] {
+    grid-template-columns: 1fr;
+  }
+
+  .management-project-creator {
+    grid-template-columns: 1fr;
+  }
+
+  .management-inline-form {
+    grid-template-columns: 1fr;
+  }
+}
+.management-experiment-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.55fr) minmax(560px, 1.45fr);
+  gap: 18px;
+}
+
+.management-create-experiment {
+  margin-top: 12px;
+}
+
+.management-experiment-detail {
+  gap: 16px;
+}
+
+.management-status-control {
+  min-width: 132px;
+}
+
+.management-status-control .field {
+  margin-top: 5px;
+}
+
+.management-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.management-detail-grid > section {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.management-detail-grid h4 {
+  margin: 0 0 7px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.management-experiment-forms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.management-stage-assignment {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.management-audit-panel {
+  min-height: 100%;
+}
+
+.management-audit-panel .management-section-head {
+  align-items: end;
+}
+
+.management-audit-panel .management-section-head p {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.management-audit-panel .management-section-head label {
+  min-width: 170px;
+}
+
+.management-audit-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.management-audit-row {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 4px;
+}
+
+.management-audit-row > span:nth-child(2) {
+  display: grid;
+  gap: 4px;
+}
+
+.management-audit-row small,
+.management-audit-row time {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.management-audit-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--navy);
+}
+
+@media (max-width: 900px) {
+  .management-experiment-layout,
+  .management-detail-grid,
+  .management-experiment-forms {
+    grid-template-columns: 1fr;
+  }
+
+  .management-stage-assignment {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .management-audit-panel .management-section-head {
+    align-items: stretch;
+  }
+}
+.model-management-modal {
+  height: min(680px, 88vh);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.management-model-numbers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.management-model-default {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.model-management-modal .management-section-head p {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .management-model-numbers {
+    grid-template-columns: 1fr;
+  }
+}
+[data-management-setup][hidden] {
+  display: none !important;
+}
+
+.management-create-class {
+  margin-top: 12px;
+}
+.management-project-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.model-test-result {
+  font-weight: 700;
+}
+
+.model-test-result.is-success {
+  color: var(--green);
+}
+
+.model-test-result.is-error {
+  color: var(--accent);
+}
+.prompt-layer-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 12px 0 18px;
+  padding: 14px;
+  background: var(--surface-soft);
+}
+.prompt-inspector-operation { border-top: 1px solid var(--line); padding: 12px 0; }
+.prompt-inspector-operation summary { cursor: pointer; font-weight: 700; color: var(--navy); }
+.prompt-inspector-operation pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f4f7fb;
+  color: #17243a;
+  font: 14px/1.55 Consolas, monospace;
+}

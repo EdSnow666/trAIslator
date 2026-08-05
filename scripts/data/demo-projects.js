@@ -1,9 +1,12 @@
 /**
  * 职责: 提供可重置的英中、中英路演项目与多版本译文数据
- * 依赖内部: 无
+ * 依赖内部: ./a36-project.js, ./a24-sr1-project.js
  * 依赖外部: 无
  * 暴露: DEMO_PROJECTS | createDemoProjects
  */
+
+import { A36_PROJECT } from './a36-project.js?v=20260804-01';
+import { A24_SR1_PROJECT } from './a24-sr1-project.js?v=20260804-01';
 
 const enZhPrompts = [
   {
@@ -171,6 +174,41 @@ const zhEnSegments = [
   },
 ];
 
+function createAiPostEditExample(translationItem, prompt, proposedText, decisions = {}) {
+  return {
+    status: 'pending',
+    baseText: translationItem.aiText,
+    proposedText,
+    promptId: prompt.id,
+    promptLabel: `v${prompt.version}`,
+    promptTitle: prompt.title,
+    promptSnapshot: prompt.content,
+    model: 'Mock-PostEditor 1.0',
+    createdAt: '2026-08-03 10:30',
+    decisions,
+    resultText: null,
+  };
+}
+
+function attachAiPostEditExample(segment, prompt, proposedText, decisions = {}) {
+  const translationItem = segment.translations.find((item) => item.id === segment.currentTranslationId);
+  translationItem.aiPostEdit = createAiPostEditExample(translationItem, prompt, proposedText, decisions);
+  segment.status = 'ai-edited';
+}
+
+attachAiPostEditExample(
+  enZhSegments[2],
+  enZhPrompts[1],
+  '这样的旅程并非个例。成千上万件相似物品都曾沿同一贸易网络流通。',
+  { 'change-1': 'rejected', 'change-2': 'accepted' },
+);
+
+attachAiPostEditExample(
+  zhEnSegments[1],
+  zhEnPrompts[1],
+  'The study asks not whether machines can replace human translators, but how people design the conditions for generating translations.',
+);
+
 function translation(id, promptId, prompt, aiText, postEditText, author) {
   return {
     id,
@@ -240,6 +278,8 @@ export const DEMO_PROJECTS = [
       { source: '提示词将翻译目的转化为指令。', target: 'Prompts translate skopos into operational instructions.', match: 79 },
     ],
   },
+  A36_PROJECT,
+  A24_SR1_PROJECT,
 ];
 
 export function createDemoProjects() {
