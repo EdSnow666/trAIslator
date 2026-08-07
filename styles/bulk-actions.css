@@ -1,0 +1,90 @@
+/* 职责: 一键操作下拉菜单的卡片、图标与状态颜色 */
+.bulk-actions-dropdown { position: relative; flex: 0 0 auto; }
+details.bulk-actions-dropdown > summary.brief-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  border: 1px solid #b8c4d2;
+  border-radius: 999px;
+  background: var(--navy-soft);
+  padding: 5px 11px;
+  color: var(--navy);
+  font-size: 10px;
+  font-weight: 800;
+  appearance: none;
+  list-style: none;
+  font-family: inherit;
+  line-height: normal;
+  white-space: nowrap;
+  user-select: none;
+  letter-spacing: 0;
+}
+details.bulk-actions-dropdown > summary.brief-toolbar-button:hover,
+details.bulk-actions-dropdown > summary.brief-toolbar-button:focus-visible {
+  border-color: var(--navy);
+  background: #dfe8f2;
+}
+.bulk-actions-dropdown > summary::-webkit-details-marker { display: none; }
+.bulk-actions-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  width: 250px;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 7px;
+}
+.bulk-action-card {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 7px 8px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.bulk-action-card:hover,
+.bulk-action-card:focus-visible {
+  border-color: var(--card-accent);
+  box-shadow: 0 4px 12px rgb(28 47 74 / 9%);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.bulk-action-card > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.bulk-action-card strong { font-size: 11px; }
+.bulk-action-card small { color: var(--ink-soft); font-size: 9px; line-height: 1.35; }
+.bulk-action-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--card-soft);
+  color: var(--card-accent);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.bulk-action-card.is-translation { --card-accent: #2463a7; --card-soft: #e8f1fc; }
+.bulk-action-card.is-post-edit { --card-accent: #d66a2c; --card-soft: #fff0e7; }
+.bulk-action-card.is-confirm { --card-accent: #277c62; --card-soft: #e7f5ef; }
+.bulk-action-card.is-submit { --card-accent: #a64a61; --card-soft: #faeaf0; }
+
+@media (max-width: 760px) { .bulk-actions-menu { width: 220px; } }

@@ -8,7 +8,7 @@
     "start": "node dist/server/src/main.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test --test-isolation=none dist/server/tests/backend.test.js dist/server/tests/document-import.test.js scripts/tests/segmenter.test.js scripts/tests/project-export.test.js",
+    "test": "npm run build && node --test --test-isolation=none dist/server/tests/backend.test.js dist/server/tests/document-import.test.js dist/server/tests/prompt-structures.test.js scripts/tests/segmenter.test.js scripts/tests/project-export.test.js scripts/tests/store-persistence.test.js",
     "db:migrate": "npm run build --silent && node dist/server/src/cli.js db:migrate",
     "db:deploy": "npm run build --silent && node dist/server/src/cli.js db:deploy",
     "db:status": "npm run build --silent && node dist/server/src/cli.js db:status",

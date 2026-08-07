@@ -5,7 +5,7 @@
  * 暴露: hasVisibleAiPostEdit | renderAiPostEditField
  */
 
-import { getAiPostEditParts } from '../services/ai-post-edit.js?v=20260804-01';
+import { getAiPostEditParts } from '../services/ai-post-edit.js';
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (character) => ({

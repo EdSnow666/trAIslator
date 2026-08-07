@@ -87,7 +87,7 @@ function copyPromptVersions(context: AppContext, lineage: LineageRow, newLineage
 
 function copyPrompts(context: AppContext, sourceId: string, projectId: string, userId: string): Map<string, string> {
   const lineages = context.db.prepare(`SELECT id, name FROM prompt_lineages
-    WHERE project_id = ? ORDER BY created_at`).all(sourceId) as LineageRow[];
+    WHERE project_id = ? AND prompt_kind = 'translation' ORDER BY created_at`).all(sourceId) as LineageRow[];
   const ids = new Map<string, string>();
   const insert = context.db.prepare(`INSERT INTO prompt_lineages
     (id, project_id, owner_user_id, name, created_at) VALUES (?, ?, NULL, ?, ?)`);
@@ -103,7 +103,8 @@ function copyPrompts(context: AppContext, sourceId: string, projectId: string, u
 function copyActivePrompt(context: AppContext, sourceId: string, projectId: string,
   userId: string, promptIds: Map<string, string>): void {
   const row = context.db.prepare(`SELECT prompt_version_id FROM project_prompt_publications
-    WHERE project_id = ? AND retired_at IS NULL ORDER BY published_at DESC LIMIT 1`)
+    WHERE project_id = ? AND prompt_kind = 'translation' AND retired_at IS NULL
+    ORDER BY published_at DESC LIMIT 1`)
     .get(sourceId) as { prompt_version_id: string } | undefined;
   const promptId = row ? promptIds.get(row.prompt_version_id) : undefined;
   if (!promptId) return;

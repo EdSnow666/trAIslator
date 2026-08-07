@@ -5,9 +5,9 @@
  * 暴露: openProjectManagementModal
  */
 
-import { apiRequest, currentAuth } from '../services/auth-client.js?v=20260805-02';
-import { dialogs, showToast } from './dialogs.js?v=20260805-07';
-import { escapeHtml } from './render.js?v=20260805-04';
+import { apiRequest, currentAuth } from '../services/auth-client.js';
+import { dialogs, showToast } from './dialogs.js';
+import { escapeHtml } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 let projects = [];

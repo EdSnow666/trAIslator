@@ -153,6 +153,16 @@
 
 .project-class-tags {
   display: inline-flex;
+  white-space: nowrap;
+}
+
+.project-switcher > .badge,
+.project-class-tags .badge {
+  min-height: 19px;
+  padding: 2px 7px;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .top-actions {
@@ -413,6 +423,25 @@ body.is-resizing-columns {
 
 .column-head div + div {
   border-left: 1px solid var(--line);
+}
+
+.target-column-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.column-action-button {
+  border: 1px solid #aeb9c7;
+  border-radius: 999px;
+  background: #f7f8fa;
+  padding: 3px 8px;
+  color: var(--navy);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
 }
 
 .segment-grid {

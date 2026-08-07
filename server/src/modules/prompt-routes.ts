@@ -1,5 +1,5 @@
 /**
- * 职责: 暴露 Prompt 私有版本、主动提交、工作空间选择和教师发布/取消发布 API
+ * 职责: 暴露 Prompt 私有版本、主动提交、工作空间选择和教师发布/取消发布及版本归档 API
  * 依赖内部: ../auth/authorization.ts, ../context.ts, ./prompts.ts
  * 依赖外部: fastify
  * 暴露: registerPromptRoutes
@@ -8,14 +8,15 @@
 import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
-import { createPromptVersion, listVisiblePrompts, publishPrompt, selectWorkspacePrompt, unpublishPrompt,
-  submitPrompt, type PromptInput } from './prompts.js';
+import { archivePromptVersion, createPromptVersion, listVisiblePrompts, publishPrompt,
+  restorePromptVersion, selectWorkspacePrompt, unpublishPrompt, submitPrompt,
+  type PromptInput, type PromptKind } from './prompts.js';
 
 interface ProjectParams { projectId: string }
 interface PromptParams { promptVersionId: string }
 interface WorkspaceParams { workspaceId: string }
 interface PublishBody { promptVersionId: string }
-interface ActivePromptBody { promptVersionId: string; requestId?: string }
+interface ActivePromptBody { promptVersionId: string; requestId?: string; promptKind?: PromptKind }
 
 function registerPromptReadRoutes(app: FastifyInstance, context: AppContext): void {
   app.get<{ Params: ProjectParams }>('/api/projects/:projectId/prompts',
@@ -33,10 +34,20 @@ function registerPromptAuthorRoutes(app: FastifyInstance, context: AppContext): 
     { preHandler: requireReadyAccount }, async (request, reply) => reply.code(201).send({
       id: submitPrompt(context, request.authUser!, request.params.promptVersionId),
     }));
+  app.post<{ Params: PromptParams }>('/api/prompts/:promptVersionId/archive',
+    { preHandler: requireReadyAccount }, async (request) => {
+      archivePromptVersion(context, request.authUser!, request.params.promptVersionId);
+      return { ok: true };
+    });
+  app.post<{ Params: PromptParams }>('/api/prompts/:promptVersionId/restore',
+    { preHandler: requireReadyAccount }, async (request) => {
+      restorePromptVersion(context, request.authUser!, request.params.promptVersionId);
+      return { ok: true };
+    });
   app.post<{ Params: WorkspaceParams; Body: ActivePromptBody }>('/api/workspaces/:workspaceId/active-prompt',
     { preHandler: requireReadyAccount }, async (request) => {
       selectWorkspacePrompt(context, request.authUser!, request.params.workspaceId,
-        request.body.promptVersionId, request.body.requestId);
+        request.body.promptVersionId, request.body.requestId, request.body.promptKind);
       return { ok: true };
     });
 }

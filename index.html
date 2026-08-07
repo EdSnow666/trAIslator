@@ -9,12 +9,15 @@
   <meta name="description" content="面向英中、中英翻译教学的 Prompt 驱动型 CAT 演示工具">
   <title>Translation AIducator</title>
   <link rel="stylesheet" href="./styles/base.css?v=20260805-03">
-  <link rel="stylesheet" href="./styles/layout.css?v=20260805-06">
-  <link rel="stylesheet" href="./styles/components.css?v=20260805-06">
+  <link rel="stylesheet" href="./styles/layout.css?v=20260806-08">
+  <link rel="stylesheet" href="./styles/components.css?v=20260806-07">
   <link rel="stylesheet" href="./styles/prompt-coach.css?v=20260804-01">
+  <link rel="stylesheet" href="./styles/prompt-management.css?v=20260806-07">
   <link rel="stylesheet" href="./styles/ai-post-edit.css?v=20260804-01">
   <link rel="stylesheet" href="./styles/auth.css?v=20260804-02">
-  <link rel="stylesheet" href="./styles/management.css?v=20260805-08">
+  <link rel="stylesheet" href="./styles/management.css?v=20260806-10">
+  <link rel="stylesheet" href="./styles/project-resources.css?v=20260806-02">
+  <link rel="stylesheet" href="./styles/bulk-actions.css?v=20260806-08">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -31,7 +34,8 @@
             <button id="import-button" class="menu-item">新建本地项目</button>
             <button id="project-management-button" class="menu-item" data-action="open-project-management" hidden>项目管理</button>
             <button id="personal-key-project" class="menu-item" data-action="open-personal-api-keys" hidden>个人 Key</button>
-            <button id="brief-button" class="menu-item">冷启动任务书</button>
+            <button id="brief-button" class="menu-item">任务书</button>
+            <button class="menu-item" data-action="open-pair-import" data-import-kind="reference">上传参考译文</button>
             <span class="menu-divider"></span>
             <button id="export-button" class="menu-item">导出项目</button>
             <button class="menu-item" data-action="download-post-edit-json">导出全部译后编辑 JSON</button>
@@ -51,7 +55,8 @@
           <summary>Prompt</summary>
           <div class="menu-popover">
             <button class="menu-item" data-action="open-right-tab" data-tab="prompt">当前译文与 Prompt 详情</button>
-            <button class="menu-item" data-action="open-prompt-lineage">查看 Prompt 谱系</button>
+            <button class="menu-item" data-action="open-prompt-lineage" data-prompt-kind="translation">查看 Prompt 谱系</button>
+            <button class="menu-item" data-action="open-post-edit-task">译后编辑 Prompt</button>
             <button id="new-prompt-button" class="menu-item">新建 Prompt 版本</button>
             <button class="menu-item" data-action="generate-project-resource" data-resource="prompt">自动生成全文 Prompt</button>
             <button id="prompt-inspector-button" class="menu-item" data-action="open-prompt-inspector" hidden>后台 Prompt 发送结构</button>
@@ -60,17 +65,16 @@
         <details class="menu-dropdown">
           <summary>资源</summary>
           <div class="menu-popover">
-            <button class="menu-item" data-action="open-right-tab" data-tab="terms">项目术语库</button>
-            <button class="menu-item" data-action="open-right-tab" data-tab="tm">翻译记忆</button>
-            <button class="menu-item" data-action="open-right-tab" data-tab="mentor">AI Prompt 教练</button>
+            <button class="menu-item" data-action="open-resource-modal" data-tab="terms">项目术语库</button>
+            <button class="menu-item" data-action="open-resource-modal" data-tab="tm">翻译记忆</button>
+            <button class="menu-item" data-action="open-resource-modal" data-tab="mentor">AI Prompt 教练</button>
           </div>
         </details>
         <details id="management-menu" class="menu-dropdown" hidden>
           <summary>管理</summary>
           <div class="menu-popover">
             <button id="management-button" class="menu-item" data-action="open-management" hidden>教学管理</button>
-            <button id="api-button" class="menu-item">API 接口</button>
-            <button id="personal-key-management" class="menu-item" data-action="open-personal-api-keys" hidden>个人 Key</button>
+            <button id="api-button" class="menu-item">模型与 API</button>
           </div>
         </details>
         <details class="menu-dropdown">
@@ -139,8 +143,9 @@
         <section class="rail-section rail-prompts-section">
           <div class="section-heading">
             <button class="section-heading-button" data-action="open-prompt-lineage">Prompt 谱系</button>
-            <button class="text-button" data-action="open-prompt-lineage">查看全部</button>
+            <button id="prompt-lineage-all" class="text-button" data-action="open-prompt-lineage">查看全部</button>
           </div>
+          <div id="prompt-kind-switch" class="prompt-face-switch" aria-label="翻译与译后编辑 Prompt 切换"></div>
           <div id="prompt-history" class="prompt-history" aria-label="Prompt 谱系"></div>
         </section>
 
@@ -154,16 +159,25 @@
           <button class="pane-reopen-button pane-reopen-left" data-action="show-pane" data-pane-target="left" aria-label="显示左侧项目栏" title="显示左侧项目栏">›</button>
           <div class="toolbar-context">
             <span class="muted">当前使用</span>
-            <button id="active-prompt-label" class="active-prompt-trigger" data-action="open-prompt-lineage" aria-label="查看当前 Prompt 谱系"></button>
-            <button class="text-button" data-action="open-project-brief">任务书</button>
+          <button id="active-prompt-label" class="active-prompt-trigger" data-action="open-prompt-lineage" data-prompt-kind="translation" aria-label="查看当前 Prompt 谱系"></button>
+            <button class="brief-toolbar-button" data-action="open-project-brief">任务书</button>
           </div>
           <button class="pane-reopen-button pane-reopen-right" data-action="show-pane" data-pane-target="right" aria-label="显示右侧详情栏" title="显示右侧详情栏">‹</button>
         </div>
 
         <div class="editor-scroll">
-          <div class="column-head" aria-hidden="true">
+          <div class="column-head">
             <div>原文 SOURCE</div>
-            <div>译文 TARGET · 可直接译后编辑</div>
+            <div class="target-column-heading"><span>译文 TARGET · 可直接译后编辑</span>
+              <details class="menu-dropdown bulk-actions-dropdown">
+                <summary class="brief-toolbar-button">一键操作</summary>
+                <div class="bulk-actions-menu">
+                  <button class="bulk-action-card is-translation" data-action="bulk-generate-all"><span class="bulk-action-icon">▤</span><span><strong>重译全文</strong><small>逐句生成并保存新版本</small></span></button>
+                  <button class="bulk-action-card is-post-edit" data-action="bulk-post-edit-all"><span class="bulk-action-icon">✦</span><span><strong>译后编辑全文</strong><small>使用当前译后编辑 Prompt</small></span></button>
+                  <button class="bulk-action-card is-confirm" data-action="bulk-confirm-all"><span class="bulk-action-icon">✓</span><span><strong>确认所有译文</strong><small>统一标记为已确认</small></span></button>
+                  <button class="bulk-action-card is-submit" data-action="bulk-submit-all"><span class="bulk-action-icon">⇧</span><span><strong>提交所有译文</strong><small>发送给教师集中审阅</small></span></button>
+                </div>
+              </details></div>
             <div>状态</div>
           </div>
           <section id="segment-grid" class="segment-grid" aria-label="双语句段编辑器"></section>
@@ -197,6 +211,6 @@
   <div id="modal-root"></div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
-  <script type="module" src="./scripts/app.js?v=20260805-15"></script>
+  <script type="module" src="./scripts/app.js?v=20260806-03"></script>
 </body>
 </html>

@@ -5,8 +5,8 @@
  * 暴露: DEMO_PROJECTS | createDemoProjects
  */
 
-import { A36_PROJECT } from './a36-project.js?v=20260804-01';
-import { A24_SR1_PROJECT } from './a24-sr1-project.js?v=20260804-01';
+import { A36_PROJECT } from './a36-project.js';
+import { A24_SR1_PROJECT } from './a24-sr1-project.js';
 
 const enZhPrompts = [
   {

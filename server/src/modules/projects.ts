@@ -2,7 +2,7 @@
  * 职责: 查询角色可见项目并创建本地项目、发布分配项目和个人工作空间
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./project-resources.ts
  * 依赖外部: 无
- * 暴露: listVisibleProjects | createProject | publishProject | unpublishProject | deleteProject | assignProject | createWorkspace | openProjectWorkspace | projectDetail
+ * 暴露: listVisibleProjects | createProject | publishProject | unpublishProject | deleteProject | assignProject | unassignProject | createWorkspace | openProjectWorkspace | projectDetail
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -139,12 +139,37 @@ function validateProjectInput(context: AppContext, user: AuthUser, input: Projec
 
 
 function setInitialWorkspacePrompt(context: AppContext, projectId: string, workspaceId: string): void {
-  const prompt = context.db.prepare(`SELECT pv.id FROM prompt_versions pv
-    JOIN prompt_lineages pl ON pl.id = pv.lineage_id WHERE pl.project_id = ?
-    ORDER BY pv.created_at DESC LIMIT 1`).get(projectId) as { id: string } | undefined;
-  if (!prompt) return;
-  context.db.prepare(`UPDATE project_workspaces SET active_prompt_version_id = ?, updated_at = ?,
-    row_version = row_version + 1 WHERE id = ?`).run(prompt.id, nowIso(), workspaceId);
+  const rows = context.db.prepare(`SELECT pv.id, pl.prompt_kind AS kind,
+      CASE WHEN ppp.id IS NULL THEN 0 ELSE 1 END AS published FROM prompt_versions pv
+    JOIN prompt_lineages pl ON pl.id = pv.lineage_id
+    LEFT JOIN project_prompt_publications ppp ON ppp.prompt_version_id = pv.id
+      AND ppp.retired_at IS NULL
+    LEFT JOIN prompt_version_archives pva ON pva.prompt_version_id = pv.id
+    WHERE pl.project_id = ? AND pva.prompt_version_id IS NULL
+    ORDER BY published DESC, pv.created_at DESC`).all(projectId) as Array<{ id: string; kind: string }>;
+  const translation = rows.find((row) => row.kind === 'translation')?.id || null;
+  const postEdit = rows.find((row) => row.kind === 'post_edit')?.id || null;
+  context.db.prepare(`UPDATE project_workspaces SET active_prompt_version_id = ?,
+    active_post_edit_prompt_version_id = ?, updated_at = ?, row_version = row_version + 1
+    WHERE id = ?`).run(translation, postEdit, nowIso(), workspaceId);
+}
+
+function createDefaultPostEditPrompt(context: AppContext, user: AuthUser,
+  projectId: string, time: string): string {
+  const lineageId = newId();
+  const versionId = newId();
+  const content = '在不改变原意的前提下，对当前译文进行句法、衔接和表达层面的译后编辑。忽略术语替换；只输出编辑后的完整译文。';
+  context.db.prepare(`INSERT INTO prompt_lineages
+    (id, project_id, owner_user_id, name, created_at, prompt_kind)
+    VALUES (?, ?, ?, '项目译后编辑 Prompt', ?, 'post_edit')`).run(lineageId, projectId, user.id, time);
+  context.db.prepare(`INSERT INTO prompt_versions (id, lineage_id, created_by, version_number,
+    title, note, content, content_hash, source_type, created_at)
+    VALUES (?, ?, ?, 1, '基础译后编辑 Prompt', '项目初始化译后编辑规则', ?, ?, 'human', ?)`)
+    .run(versionId, lineageId, user.id, content, sha256(content), time);
+  context.db.prepare(`INSERT INTO project_prompt_publications (id, project_id, prompt_version_id,
+    published_by, published_at, prompt_kind) VALUES (?, ?, ?, ?, ?, 'post_edit')`)
+    .run(newId(), projectId, versionId, user.id, time);
+  return versionId;
 }
 
 export async function createProject(context: AppContext, user: AuthUser, input: ProjectInput): Promise<string> {
@@ -167,6 +192,7 @@ export async function createProject(context: AppContext, user: AuthUser, input: 
     }
     insertSourceDocument(context, id, input);
     personalAssignmentId = createPersonalAssignment(context, user, id);
+    createDefaultPostEditPrompt(context, user, id, time);
     recordActivity(context, { eventType: 'project.created', actorUserId: user.id, projectId: id,
       metadata: { sourceTemplateProjectId: input.sourceTemplateProjectId || null } });
   }).immediate();
@@ -261,6 +287,17 @@ export function assignProject(context: AppContext, user: AuthUser, projectId: st
   return id;
 }
 
+export function unassignProject(context: AppContext, user: AuthUser, assignmentId: string): void {
+  const row = context.db.prepare(`SELECT project_id FROM project_assignments
+    WHERE id = ? AND status = 'active'`).get(assignmentId) as { project_id: string } | undefined;
+  if (!row) throw new AppError(404, 'ASSIGNMENT_NOT_FOUND', '项目分配不存在或已移除。');
+  ensureProjectManage(context, user, row.project_id);
+  context.db.prepare(`UPDATE project_assignments SET status = 'closed' WHERE id = ?`)
+    .run(assignmentId);
+  recordActivity(context, { eventType: 'project.unassigned', actorUserId: user.id,
+    projectId: row.project_id, metadata: { assignmentId } });
+}
+
 function canJoinAssignment(context: AppContext, userId: string, assignmentId: string): { project_id: string } | undefined {
   return context.db.prepare(`SELECT pa.project_id FROM project_assignments pa
     LEFT JOIN class_memberships cm ON cm.class_id = pa.class_id AND cm.user_id = ? AND cm.status = 'active'
@@ -282,6 +319,7 @@ export function createWorkspace(context: AppContext, user: AuthUser, assignmentI
     (id, project_id, assignment_id, owner_user_id, origin_instance_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(id, assignment.project_id, assignmentId, user.id, context.instanceId, time, time);
+  setInitialWorkspacePrompt(context, assignment.project_id, id);
   recordActivity(context, { eventType: 'workspace.created', actorUserId: user.id,
     projectId: assignment.project_id, workspaceId: id });
   return id;
@@ -292,10 +330,9 @@ export function openProjectWorkspace(context: AppContext, user: AuthUser, projec
   const existing = userWorkspace(context, user.id, projectId);
   if (existing) return existing.id;
   const assignment = eligibleAssignment(context, user.id, projectId);
-  if (!assignment) {
-    throw new AppError(409, 'PROJECT_NOT_ASSIGNED', '系统模板或未分配项目为只读；请先发布到班级或实验阶段。');
-  }
-  return createWorkspace(context, user, assignment.id);
+  if (assignment) return createWorkspace(context, user, assignment.id);
+  ensureProjectManage(context, user, projectId);
+  return createWorkspace(context, user, createPersonalAssignment(context, user, projectId));
 }
 
 export function projectDetail(context: AppContext, user: AuthUser, projectId: string): unknown {

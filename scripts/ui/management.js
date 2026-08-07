@@ -5,10 +5,10 @@
  * 暴露: openManagementModal
  */
 
-import { apiRequest, currentAuth } from '../services/auth-client.js?v=20260805-02';
-import { showToast } from './dialogs.js?v=20260805-07';
-import { experimentPane, auditPane } from './management-experiments.js?v=20260805-01';
-import { escapeHtml } from './render.js?v=20260805-04';
+import { apiRequest, currentAuth } from '../services/auth-client.js';
+import { showToast } from './dialogs.js';
+import { experimentPane, auditPane } from './management-experiments.js';
+import { escapeHtml } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 const roleLabels = { admin: '管理员', teacher: '教师', student: '学生', experiment_user: '实验用户' };
@@ -16,8 +16,9 @@ let managementState = emptyState();
 
 function emptyState() {
   return { tab: 'teaching', classes: [], projects: [], users: [], experiments: [], events: [],
+    submissions: { prompts: [], translations: [] },
     classDetail: null, experimentDetail: null, selectedClassId: null, selectedExperimentId: null,
-    auditPrefix: '', secret: null };
+    auditPrefix: '', secret: null, classCreateOpen: false, editingClass: null };
 }
 
 function isAdmin() {
@@ -63,13 +64,14 @@ function selectAvailableRecords() {
 
 async function loadManagementData() {
   const requests = [apiRequest('/api/classes'), apiRequest('/api/projects'),
-    apiRequest('/api/experiments'), apiRequest(auditUrl())];
+    apiRequest('/api/experiments'), apiRequest(auditUrl()), apiRequest('/api/teaching/submissions')];
   if (isAdmin()) requests.push(apiRequest('/api/admin/users'));
-  const [classResult, projectResult, experimentResult, activityResult, userResult] = await Promise.all(requests);
+  const [classResult, projectResult, experimentResult, activityResult, submissionResult, userResult] = await Promise.all(requests);
   managementState.classes = classResult.classes;
   managementState.projects = projectResult.projects;
   managementState.experiments = experimentResult.experiments;
   managementState.events = activityResult.events;
+  managementState.submissions = submissionResult;
   managementState.users = userResult?.users || [];
   selectAvailableRecords();
   [managementState.classDetail, managementState.experimentDetail] = await Promise.all([
@@ -110,11 +112,13 @@ function secretNotice() {
 
 function classCards() {
   if (!managementState.classes.length) return '<div class="empty-state">尚未创建班级。</div>';
-  return managementState.classes.map((item) => `<button class="management-list-card ${item.id === managementState.selectedClassId ? 'is-active' : ''}"
+  return managementState.classes.map((item, index) => `<article class="management-class-card class-tone-${index % 4}"><button class="management-list-card ${item.id === managementState.selectedClassId ? 'is-active' : ''}"
       data-management-action="select-class" data-class-id="${item.id}">
       <span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.code)}</small></span>
       <span>${item.studentCount} 名学生 · ${item.memberCount} 名成员</span>
-    </button>`).join('');
+    </button><div class="management-class-actions"><button class="text-button" data-management-action="edit-class" data-class-id="${item.id}">编辑</button>
+      <button class="text-button danger-text" data-management-action="dissolve-class" data-class-id="${item.id}">解散班级</button></div>
+    ${item.id === managementState.selectedClassId ? classDetailPanel() : ''}</article>`).join('');
 }
 
 function memberRows() {
@@ -123,9 +127,16 @@ function memberRows() {
   return members.map((member) => `<div class="management-member-row">
     <span><strong>${escapeHtml(member.displayName)}</strong><small>@${escapeHtml(member.username)} · ${roleLabels[member.membershipRole]}</small></span>
     <span class="management-row-actions"><em>${member.status === 'active' ? '有效' : '已移除'}</em>
-      ${member.status === 'active' ? `<button class="text-button danger-text" data-management-action="remove-member"
-        data-user-id="${member.id}" data-membership-role="${member.membershipRole}">移除</button>` : ''}</span>
+      ${memberAction(member)}</span>
   </div>`).join('');
+}
+
+function memberAction(member) {
+  if (member.status !== 'active') return `<button class="text-button" data-management-action="readd-member"
+    data-username="${escapeHtml(member.username)}" data-membership-role="${member.membershipRole}">重新添加</button>`;
+  if (!isAdmin() && safeRoles(member.roles).includes('admin')) return '<small>系统管理员受保护</small>';
+  return `<button class="text-button danger-text" data-management-action="remove-member"
+    data-class-id="${managementState.classDetail?.id}" data-user-id="${member.id}" data-membership-role="${member.membershipRole}">移除</button>`;
 }
 
 function classProjectRows() {
@@ -133,14 +144,14 @@ function classProjectRows() {
   if (!projects.length) return '<div class="empty-state">该班级尚未分配项目。</div>';
   return projects.map((project) => `<div class="management-member-row">
     <span><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.direction)} · ${escapeHtml(project.status)}</small></span>
+    <button class="text-button danger-text" data-management-action="remove-assignment"
+      data-assignment-id="${project.assignmentId}">移除</button>
   </div>`).join('');
 }
 function classDetailPanel() {
   const detail = managementState.classDetail;
   if (!detail) return '<section class="management-panel"><div class="empty-state">选择或创建班级后管理成员。</div></section>';
-  return `<section class="management-panel"><div class="management-panel-title">
-      <div><h3>${escapeHtml(detail.name)}</h3><p>${escapeHtml(detail.code)} · ${detail.memberCount} 名成员</p></div>
-    </div><h4>已分配项目</h4><div class="management-members">${classProjectRows()}</div>
+  return `<section class="management-panel"><h4>已分配项目</h4><div class="management-members">${classProjectRows()}</div>
     <h4>班级成员</h4><div class="management-members">${memberRows()}</div>
     <form class="management-inline-form" data-management-form="add-member">
       <input type="hidden" name="classId" value="${detail.id}">
@@ -151,10 +162,22 @@ function classDetailPanel() {
 }
 
 function createClassForm() {
-  return `<form class="management-panel management-create-class" data-management-form="create-class"><h3>新建班级</h3>
+  if (!managementState.classCreateOpen) return '';
+  return `<div class="management-submodal"><form class="management-panel management-create-class" data-management-form="create-class"><h3>新建班级</h3>
     <label>班级名称<input class="field" name="name" required placeholder="例如 2026 春季英汉翻译"></label>
     <label>班级代码<input class="field" name="code" required placeholder="例如 ENZH-2026-01"></label>
-    <button class="button button-secondary" type="submit">创建班级</button></form>`;
+    <div class="management-project-actions"><button class="button button-ghost" type="button" data-management-action="close-create-class">取消</button>
+    <button class="button button-secondary" type="submit">创建班级</button></div></form></div>`;
+}
+
+function editClassForm() {
+  const item = managementState.editingClass;
+  if (!item) return '';
+  return `<div class="management-submodal"><form class="management-panel management-create-class" data-management-form="edit-class"><h3>编辑班级</h3>
+    <input type="hidden" name="classId" value="${item.id}"><label>班级名称<input class="field" name="name" required value="${escapeHtml(item.name)}"></label>
+    <label>班级代码<input class="field" name="code" required value="${escapeHtml(item.code)}"></label>
+    <div class="management-project-actions"><button class="button button-ghost" type="button" data-management-action="close-edit-class">取消</button>
+    <button class="button button-secondary" type="submit">保存班级</button></div></form></div>`;
 }
 
 function projectForms() {
@@ -166,10 +189,11 @@ function projectForms() {
       <button class="button button-primary" type="submit">分配到班级</button></form>`;
 }
 function teachingPane() {
-  return `<div class="management-columns"><section><div class="management-section-head"><h3>班级</h3><span>${managementState.classes.length} 个</span></div>
-      <div class="management-list">${classCards()}</div>${classDetailPanel()}${createClassForm()}</section>
+  return `<div class="management-columns"><section><div class="management-section-head"><h3>班级</h3>
+      <button class="button button-secondary" data-management-action="open-create-class">新建班级</button></div>
+      <div class="management-list">${classCards()}</div></section>
     <section><div class="management-section-head"><h3>项目分配</h3><span>把已有项目分配到班级</span></div>
-      ${projectForms()}</section></div>`;
+      ${projectForms()}</section></div>${createClassForm()}${editClassForm()}`;
 }
 
 function userRows() {
@@ -191,9 +215,34 @@ function accountsPane() {
       <div class="management-user-list">${userRows()}</div></section></div>`;
 }
 
+function submittedPromptRows() {
+  const rows = managementState.submissions.prompts || [];
+  if (!rows.length) return '<div class="empty-state">尚无学生提交的 Prompt。</div>';
+  return rows.map((item) => `<details class="submission-row"><summary><strong>${escapeHtml(item.projectName)} · v${item.version} · ${escapeHtml(item.title)}</strong>
+    <small>${escapeHtml(item.submittedBy)} · ${escapeHtml(item.submittedAt)}</small></summary>
+    <div class="submission-content">${escapeHtml(item.content)}</div><button class="text-button" data-management-action="publish-submitted-prompt"
+      data-project-id="${item.projectId}" data-prompt-id="${item.promptVersionId}">发布为项目 Prompt</button></details>`).join('');
+}
+
+function submittedTranslationRows() {
+  const rows = managementState.submissions.translations || [];
+  if (!rows.length) return '<div class="empty-state">尚无学生提交的译文。</div>';
+  return rows.map((item) => `<details class="submission-row"><summary><strong>${escapeHtml(item.projectName)} · ${escapeHtml(item.submittedBy)}</strong>
+    <small>${escapeHtml(item.versionKind)} · ${escapeHtml(item.submittedAt)}</small></summary>
+    <p class="submission-source">${escapeHtml(item.source)}</p><div class="submission-content">${escapeHtml(item.content)}</div></details>`).join('');
+}
+
+function submissionsPane() {
+  return `<div class="management-account-layout submissions-layout"><section class="management-panel"><div class="management-section-head"><h3>学生 Prompt</h3>
+      <span>${managementState.submissions.prompts?.length || 0} 条</span></div><div class="submission-list">${submittedPromptRows()}</div></section>
+    <section class="management-panel"><div class="management-section-head"><h3>学生译文</h3>
+      <span>${managementState.submissions.translations?.length || 0} 条</span></div><div class="submission-list">${submittedTranslationRows()}</div></section></div>`;
+}
+
 function activePane() {
   if (managementState.tab === 'experiments') return experimentPane(managementState);
   if (managementState.tab === 'audit') return auditPane(managementState);
+  if (managementState.tab === 'submissions') return submissionsPane();
   if (managementState.tab === 'accounts' && isAdmin()) return accountsPane();
   return teachingPane();
 }
@@ -207,7 +256,7 @@ function modalMarkup() {
   const accountsTab = isAdmin() ? tabButton('accounts', '账号管理') : '';
   return `<div class="modal-backdrop" data-action="close-modal"><section class="modal management-modal" role="dialog" aria-modal="true" aria-label="教学管理" data-modal-stop>
     <header class="modal-header"><div><div class="eyebrow">SERVER MANAGEMENT</div><h2>教学管理</h2></div><button class="icon-button" data-action="close-modal">×</button></header>
-    <div class="management-tabs">${tabButton('teaching', '班级与分配')}${tabButton('experiments', '实验管理')}${tabButton('audit', '活动审计')}${accountsTab}</div>
+    <div class="management-tabs">${tabButton('teaching', '班级与分配')}${tabButton('submissions', '学生提交')}${tabButton('experiments', '实验管理')}${tabButton('audit', '活动审计')}${accountsTab}</div>
     <div class="modal-body management-body">${secretNotice()}${activePane()}</div>
     <footer class="modal-footer"><span>所有操作即时写入服务器并记录活动事件。</span><button class="button button-secondary" data-action="close-modal">关闭</button></footer>
   </section></div>`;
@@ -231,6 +280,14 @@ async function createClass(form) {
   }) });
   managementState.selectedClassId = result.id;
   await refreshManagement('班级已创建。');
+}
+
+async function editClass(form) {
+  const data = new FormData(form);
+  await apiRequest(`/api/classes/${encodeURIComponent(data.get('classId'))}`, { method: 'PATCH',
+    body: JSON.stringify({ name: data.get('name'), code: data.get('code') }) });
+  managementState.editingClass = null;
+  await refreshManagement('班级信息已更新。');
 }
 
 async function addMember(form) {
@@ -291,10 +348,17 @@ async function createUser(form) {
     username: data.get('username'), displayName: data.get('displayName'), roles: [data.get('role')],
   }) });
   managementState.secret = { label: `账号 ${data.get('username')} 的初始密码`, value: result.password };
-  await refreshManagement('账号已创建，请立即保存随机密码。');
+  await copyCredentials(String(data.get('username')), result.password);
+  await refreshManagement('账号已创建，用户名和随机密码已复制到剪贴板。');
 }
 
-const formHandlers = { 'create-class': createClass, 'add-member': addMember,
+async function copyCredentials(username, password) {
+  const text = `用户名：${username}\n密码：${password}`;
+  try { await navigator.clipboard.writeText(text); }
+  catch { showToast('账号已创建，但浏览器未授予剪贴板权限，请立即手动保存密码。'); }
+}
+
+const formHandlers = { 'create-class': createClass, 'edit-class': editClass, 'add-member': addMember,
   'assign-project': assignProject, 'create-user': createUser,
   'create-experiment': createExperiment, 'create-stage': createStage,
   'enroll-participant': enrollParticipant, 'assign-experiment-project': assignExperimentProject };
@@ -317,9 +381,33 @@ async function resetPassword(trigger) {
 }
 
 async function removeMember(trigger) {
-  const classId = managementState.selectedClassId;
+  const classId = trigger.dataset.classId || managementState.selectedClassId;
   await apiRequest(`/api/classes/${encodeURIComponent(classId)}/members/${encodeURIComponent(trigger.dataset.userId)}/${trigger.dataset.membershipRole}`, { method: 'DELETE' });
   await refreshManagement('班级成员已移除。');
+}
+
+async function readdMember(trigger) {
+  await apiRequest(`/api/classes/${encodeURIComponent(managementState.selectedClassId)}/members`, { method: 'POST',
+    body: JSON.stringify({ username: trigger.dataset.username, membershipRole: trigger.dataset.membershipRole }) });
+  await refreshManagement('班级成员已重新添加。');
+}
+
+async function dissolveClass(trigger) {
+  await apiRequest(`/api/classes/${encodeURIComponent(trigger.dataset.classId)}`, { method: 'DELETE' });
+  managementState.selectedClassId = null;
+  await refreshManagement('班级已解散，历史记录仍然保留。', true);
+}
+
+async function removeAssignment(trigger) {
+  await apiRequest(`/api/assignments/${encodeURIComponent(trigger.dataset.assignmentId)}`, { method: 'DELETE' });
+  await refreshManagement('项目已从班级移除。', true);
+}
+
+async function publishSubmittedPrompt(trigger) {
+  await apiRequest(`/api/projects/${encodeURIComponent(trigger.dataset.projectId)}/prompts/publish`, {
+    method: 'POST', body: JSON.stringify({ promptVersionId: trigger.dataset.promptId }),
+  });
+  await refreshManagement('学生 Prompt 已发布为项目 Prompt。', true);
 }
 
 async function withdrawParticipant(trigger) {
@@ -333,6 +421,10 @@ async function handleManagementClick(event) {
   if (!trigger || ['experiment-status', 'audit-filter'].includes(trigger.dataset.managementAction)) return;
   const action = trigger.dataset.managementAction;
   if (action === 'switch-tab') { managementState.tab = trigger.dataset.tab; return renderManagement(); }
+  if (action === 'open-create-class') { managementState.classCreateOpen = true; return renderManagement(); }
+  if (action === 'close-create-class') { managementState.classCreateOpen = false; return renderManagement(); }
+  if (action === 'edit-class') { managementState.editingClass = managementState.classes.find((item) => item.id === trigger.dataset.classId); return renderManagement(); }
+  if (action === 'close-edit-class') { managementState.editingClass = null; return renderManagement(); }
   if (action === 'select-class') { managementState.selectedClassId = trigger.dataset.classId; return refreshManagement(); }
   if (action === 'select-experiment') {
     managementState.selectedExperimentId = trigger.dataset.experimentId;
@@ -342,6 +434,10 @@ async function handleManagementClick(event) {
   try {
     if (action === 'reset-password') await resetPassword(trigger);
     if (action === 'remove-member') await removeMember(trigger);
+    if (action === 'readd-member') await readdMember(trigger);
+    if (action === 'dissolve-class') await dissolveClass(trigger);
+    if (action === 'remove-assignment') await removeAssignment(trigger);
+    if (action === 'publish-submitted-prompt') await publishSubmittedPrompt(trigger);
     if (action === 'withdraw-participant') await withdrawParticipant(trigger);
   } catch (error) { showToast(`操作失败：${error.message}`); }
   finally { if (trigger.isConnected) trigger.disabled = false; }

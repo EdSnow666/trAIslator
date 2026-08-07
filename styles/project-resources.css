@@ -1,0 +1,120 @@
+/*
+ * 职责: 任务书查看、新建项目资源生成与资源弹窗的视觉样式
+ * 依赖内部: base.css, layout.css, components.css
+ * 依赖外部: 无
+ * 暴露: brief-toolbar-button | brief-view-table | project-generation-status | resource-modal-content
+*/
+#pair-import-text,
+#post-edit-task-prompt {
+  min-height: 220px;
+}
+
+.brief-toolbar-button {
+  flex: 0 0 auto;
+  border: 1px solid #b8c4d2;
+  border-radius: 999px;
+  background: var(--navy-soft);
+  padding: 5px 11px;
+  color: var(--navy);
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.brief-toolbar-button:hover,
+.brief-toolbar-button:focus-visible {
+  border-color: var(--navy);
+  background: #dfe8f2;
+}
+
+.brief-view-table {
+  width: 100%;
+  margin-top: 16px;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+
+.brief-view-table th,
+.brief-view-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.brief-view-table th {
+  width: 110px;
+  color: var(--navy);
+  font-size: 11px;
+}
+
+.brief-view-table td {
+  font-family: var(--serif);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.generation-note {
+  border-radius: 7px;
+  background: #fff3cf;
+  padding: 10px 12px;
+  color: #73520b;
+  font-size: 11px;
+}
+
+#import-prompt-manual {
+  min-height: 300px;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.project-generation-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  border-radius: 8px;
+  background: var(--navy-soft);
+  padding: 11px 12px;
+  color: var(--navy);
+  font-size: 11px;
+}
+
+.project-generation-status[hidden] {
+  display: none;
+}
+
+.project-generation-status .text-button {
+  margin-left: auto;
+}
+
+.generation-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #b7c6d8;
+  border-top-color: var(--navy);
+  border-radius: 50%;
+}
+
+.project-generation-status.is-active .generation-spinner {
+  animation: generation-spin 0.8s linear infinite;
+}
+
+.resource-modal-content {
+  max-height: 62vh;
+  overflow: auto;
+}
+
+.resource-modal-content .panel-title {
+  font-size: 22px;
+}
+
+.resource-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@keyframes generation-spin {
+  to { transform: rotate(360deg); }
+}

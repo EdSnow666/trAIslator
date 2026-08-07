@@ -1,38 +1,47 @@
 /**
  * 职责: 绑定 Translation AIducator 演示站点的全部用户交互
- * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js
+ * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js, ui/prompt-management.js
  * 依赖外部: DOM API, Blob API
  * 暴露: 页面入口
  */
 
-import { store } from './state/store.js?v=20260805-04';
-import { initializeAuth } from './services/auth-client.js?v=20260805-04';
+import { store } from './state/store.js'; import './services/translation-drafts-input.js';
+import { initializeAuth } from './services/auth-client.js';
 import {
   createServerProject, createServerPrompt, loadProjectResourceCatalog, loadServerProjects, publishServerPrompt, refreshServerProject, unpublishServerPrompt,
   runServerAiTranslation, saveServerAiDecision, saveServerPostEdit, selectServerPrompt, selectServerVersion,
-  saveServerBrief, generateServerBrief, generateServerPrompt, serverErrorProject, submitServerPrompt,
-} from './services/server-data.js?v=20260805-08';
-import { buildImportedProject, segmentParagraphs } from './services/segmenter.js?v=20260805-01';
-import { extractImportFile } from './services/document-import.js?v=20260805-01';
-import { readProjectSetup, applyOfflineProjectSetup } from './services/project-setup.js?v=20260805-01';
+  saveServerBrief, generateServerProjectResource, generateServerProjectResources, cancelServerProjectGeneration,
+  serverErrorProject, submitServerPrompt,
+} from './services/server-data.js';
+import { buildImportedProject, segmentParagraphs } from './services/segmenter.js';
+import { extractImportFile } from './services/document-import.js';
+import { readProjectSetup, applyOfflineProjectSetup } from './services/project-setup.js';
 import {
   initLayoutPreferences, resetLayoutPreferences, setPaneVisibility, togglePaneVisibility,
-} from './services/layout-preferences.js?v=20260805-01';
-import { initModalFocusGuard } from './services/modal-focus.js?v=20260805-01';
-import { renderApp, escapeHtml, renderLiveDiff, renderAiHumanDiff, resizeTargetEditor } from './ui/render.js?v=20260805-04';
-import { dialogs, showToast } from './ui/dialogs.js?v=20260805-10';
-import { openManagementModal } from './ui/management.js?v=20260805-08';
-import { openProjectManagementModal } from './ui/project-management.js?v=20260805-01';
-import { openPersonalApiKeysModal } from './ui/personal-api-keys.js?v=20260805-01';
-import { openModelManagementModal } from './ui/model-management.js, ui/prompt-inspector.js?v=20260805-08';
-import { openPromptInspectorModal } from './ui/prompt-inspector.js?v=20260805-01';
-import { analyzePromptCoach, buildPromptCoachArtifact, buildPromptRuleAppendix } from './services/prompt-coach.js?v=20260804-01';
-import { buildPostEditCorpusArtifact } from './services/post-edit-export.js?v=20260804-01';
-import { buildProjectExportArtifact } from './services/project-export.js?v=20260805-01';
+} from './services/layout-preferences.js';
+import { initModalFocusGuard } from './services/modal-focus.js';
+import { renderApp, escapeHtml, renderLiveDiff, renderAiHumanDiff, resizeTargetEditor } from './ui/render.js';
+import { dialogs, showToast } from './ui/dialogs.js';
+import { openManagementModal } from './ui/management.js';
+import { openProjectManagementModal } from './ui/project-management.js';
+import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
+import { openModelManagementModal } from './ui/model-management.js';
+import { openPromptInspectorModal } from './ui/prompt-inspector.js';
+import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
+import { openPairImport, submitPairImport } from './ui/resource-import.js';
+import { runPostEditTask } from './ui/post-edit-task.js';
+import { cancelFullTranslation, confirmAllTranslations, generateAllPostEdits, generateAllTranslations, handleTranslationConfirmation, submitAllTranslations, submitCurrentTranslation } from './ui/translation-batch.js';
+import { analyzePromptCoach, buildPromptCoachArtifact, buildPromptRuleAppendix } from './services/prompt-coach.js';
+import { buildPostEditCorpusArtifact } from './services/post-edit-export.js';
+import { buildProjectExportArtifact } from './services/project-export.js';
 
 const actionHandlers = {
   'select-segment': selectSegment,
   'activate-prompt': activatePrompt,
+  'edit-prompt-version': openPromptVersionEditor,
+  'request-delete-prompt': requestPromptArchive,
+  'delete-prompt': archivePrompt,
+  'restore-prompt': restorePrompt,
   'submit-prompt': submitPrompt,
   'publish-prompt': publishPrompt,
   'unpublish-prompt': unpublishPrompt,
@@ -48,7 +57,9 @@ const actionHandlers = {
   'discard-ai-post-edit': discardAiPostEdit,
   'create-import-project': createImportProject,
   'save-project-brief': saveProjectBrief,
-  'generate-project-resource': generateProjectResource,
+  'generate-project-resource': dialogs.openGenerationLanguageModal,
+  'confirm-generate-project-resource': generateProjectResource,
+  'cancel-project-generation': cancelProjectGeneration,
   'download-json': downloadJson,
   'download-html': downloadHtml,
   'add-term': dialogs.openTermModal,
@@ -65,13 +76,22 @@ const actionHandlers = {
   'show-pane': showPane,
   'hide-pane': hidePane,
   'open-right-tab': openRightTab,
+  'open-resource-modal': dialogs.openResourceModal,
   'open-prompt-lineage': dialogs.openPromptLineageModal,
+  'switch-prompt-lineage': dialogs.switchPromptLineage,
+  'toggle-archived-prompts': dialogs.toggleArchivedPrompts,
+  'open-pair-import': openPairImport,
+  'submit-pair-import': submitPairImport,
+  'open-post-edit-task': dialogs.openPostEditTask,
+  'run-post-edit-task': runPostEditTask,
+  'cancel-full-translation': cancelFullTranslation,
   'open-project-brief': dialogs.openBriefModal,
+  'edit-project-brief': dialogs.openBriefEditModal,
   'open-management': openManagementModal,
   'open-project-management': openProjectManagementModal,
   'open-personal-api-keys': openPersonalApiKeysModal,
   'open-prompt-inspector': openPromptInspectorModal,
-  'reset-layout': resetLayout,
+  'reset-layout': resetLayout, 'switch-left-prompt-kind': (trigger) => { trigger.closest('#prompt-kind-switch').dataset.kind = trigger.dataset.promptKind; renderApp(); }, 'open-new-prompt-version': dialogs.openNewPromptVersion, 'bulk-generate-current': generateCurrent, 'bulk-generate-all': generateAllTranslations, 'bulk-post-edit-all': generateAllPostEdits, 'bulk-confirm-all': confirmAllTranslations, 'bulk-submit-all': submitAllTranslations, 'submit-current-translation': submitCurrentTranslation,
 };
 
 function bindStaticEvents() {
@@ -91,7 +111,7 @@ function bindStaticEvents() {
   document.querySelector('#new-prompt-button').addEventListener('click', openPromptFromActive);
   document.querySelector('#reset-button').addEventListener('click', resetDemo);
   document.querySelector('#generate-current-button').addEventListener('click', generateCurrent);
-  document.querySelector('#generate-all-button').addEventListener('click', generateAll);
+  document.querySelector('#generate-all-button').addEventListener('click', generateAllTranslations);
   document.querySelector('#compare-button').addEventListener('click', compareCurrent);
   document.querySelector('#all-versions-button').addEventListener('click', toggleAllVersions);
   document.querySelector('.right-tabs').addEventListener('click', changeRightTab);
@@ -232,14 +252,15 @@ async function activatePrompt(trigger) {
   const project = store.getProject();
   if (!store.getState().serverMode) {
     store.setActivePrompt(trigger.dataset.promptId);
-    if (trigger.closest('.modal')) dialogs.closeModal();
+    if (trigger.closest('.modal')) dialogs.openPromptLineageModal({ kind: store.getPrompt(trigger.dataset.promptId)?.promptKind });
     return showToast('已切换项目 Prompt；旧译文版本保持不变。');
   }
-  if (!project.workspaceId) return showToast('此项目没有个人工作空间；教师请使用“发布为项目 Prompt”。');
+  if (!project.workspaceId && !project.canManage) return showToast('此项目没有可编辑的个人工作空间。');
   try {
-    await selectServerPrompt(project, trigger.dataset.promptId);
+    const prompt = store.getPrompt(trigger.dataset.promptId);
+    await selectServerPrompt(project, trigger.dataset.promptId, prompt?.promptKind || 'translation');
     await refreshCurrentServerProject();
-    if (trigger.closest('.modal')) dialogs.closeModal();
+    if (trigger.closest('.modal')) dialogs.openPromptLineageModal({ kind: prompt?.promptKind });
     showToast('已切换个人工作空间的当前 Prompt。');
   } catch (error) {
     showToast(`Prompt 切换失败：${error.message}`);
@@ -330,7 +351,9 @@ async function createAndActivateServerPrompt(input, submitToTeacher = false) {
     basePrompt: input.basePrompt,
   });
   if (submitToTeacher) await submitServerPrompt(promptId);
-  if (project.workspaceId) await selectServerPrompt(project, promptId);
+  if (project.workspaceId || project.canManage) {
+    await selectServerPrompt(project, promptId, input.promptKind || 'translation');
+  }
   await refreshCurrentServerProject();
   return promptId;
 }
@@ -399,6 +422,7 @@ function promptFormInput() {
     title: document.querySelector('#prompt-title').value.trim() || '课堂共创优化',
     note: document.querySelector('#prompt-note').value.trim(),
     content: document.querySelector('#prompt-content').value.trim(),
+    promptKind: document.querySelector('#prompt-kind')?.value || 'translation',
     basePromptId: basePrompt?.id || null,
     basePrompt,
   };
@@ -409,14 +433,14 @@ async function savePromptVersion(trigger) {
   if (!input.content) return showToast('Prompt 内容不能为空。');
   if (!store.getState().serverMode) {
     const prompt = store.savePromptVersion({ ...input, parentPromptId: input.basePromptId });
-    dialogs.closeModal();
+    dialogs.openPromptLineageModal({ kind: input.promptKind });
     return showToast(`Prompt v${prompt.version} 已发布，可选择句段重新生成。`);
   }
   trigger.disabled = true;
   try {
     const submit = Boolean(document.querySelector('#prompt-submit-teacher')?.checked);
     await createAndActivateServerPrompt(input, submit);
-    dialogs.closeModal();
+    dialogs.openPromptLineageModal({ kind: input.promptKind });
     showToast(submit ? 'Prompt 候选已保存并提交给教师。' : 'Prompt 候选已保存，仅自己可见。');
   } catch (error) {
     showToast(`Prompt 保存失败：${error.message}`);
@@ -437,22 +461,6 @@ async function generateCurrent() {
     await refreshCurrentServerProject();
     showToast('AI 译文已生成，旧版本仍然保留。');
   } catch (error) { showToast(`AI 翻译失败：${error.message}`); }
-}
-
-async function generateAll() {
-  const project = store.getProject();
-  if (!store.getState().serverMode) {
-    const ids = project.segments.map((segment) => segment.id);
-    store.generateMock(ids);
-    return showToast(`已新增 ${ids.length} 个模拟译文版本。`);
-  }
-  try {
-    for (const segment of project.segments) {
-      await runServerAiTranslation(project, segment, 'ai_translation', project.activePromptId);
-    }
-    await refreshCurrentServerProject();
-    showToast(`已生成 ${project.segments.length} 个 AI 译文版本。`);
-  } catch (error) { showToast(`全文 AI 翻译中断：${error.message}`); }
 }
 
 function compareCurrent() {
@@ -633,7 +641,7 @@ function serverProjectPayload(name, direction, text, setup) {
   const enZh = direction === 'EN → ZH';
   return { name, direction, sourceLanguage: enZh ? 'en' : 'zh-CN',
     targetLanguage: enZh ? 'zh-CN' : 'en', sourceText: text,
-    documentTitle: name, kind: 'class_project', setup };
+    documentTitle: name, kind: 'class_project', setup: { ...setup, deferGeneration: true } };
 }
 
 async function createImportProject() {
@@ -642,10 +650,13 @@ async function createImportProject() {
   const name = document.querySelector('#import-name').value.trim() || '新建本地翻译项目';
   const direction = document.querySelector('#import-direction').value;
   const setup = readProjectSetup();
+  let outcome = `本地项目已创建，共 ${segmentParagraphs(text).length} 个段落。`;
   setImportBusy(true);
   try {
     if (store.getState().serverMode) {
       const result = await createServerProject(serverProjectPayload(name, direction, text, setup));
+      try { await generateServerProjectResources(result.id, setup, dialogs.updateGenerationStatus); }
+      catch (error) { outcome = `项目已创建；自动生成未完成：${error.message}`; }
       store.setServerProjects(await loadServerProjects());
       await refreshResourceCatalog();
       store.selectProject(result.id);
@@ -655,7 +666,7 @@ async function createImportProject() {
       store.addImportedProject(project);
     }
     dialogs.closeModal();
-    showToast(`本地项目已创建，共 ${segmentParagraphs(text).length} 个段落。`);
+    showToast(outcome);
   } catch (error) { showToast(`项目创建失败：${error.message}`); }
   finally { setImportBusy(false); }
 }
@@ -665,17 +676,22 @@ async function generateProjectResource(trigger) {
   if (!store.getState().serverMode) return showToast('请在服务器模式下使用自动生成功能。');
   if (!project.canManage) return showToast('只有项目管理员或教师可以自动生成项目资源。');
   const isBrief = trigger.dataset.resource === 'brief';
-  const generate = isBrief ? generateServerBrief : generateServerPrompt;
+  const language = document.querySelector('#generation-language')?.value || 'zh-CN';
   try {
-    await generate(project.id);
+    await generateServerProjectResource(project.id, trigger.dataset.resource, language, dialogs.updateGenerationStatus);
     await refreshCurrentServerProject();
-    if (isBrief) dialogs.closeModal();
-    showToast(isBrief ? '冷启动任务书已生成。' : '全文 Prompt 已生成。');
-  } catch (error) {
-    showToast(`${isBrief ? '任务书' : 'Prompt'}生成失败：${error.message}`);
-  }
+    dialogs.closeModal();
+    showToast(isBrief ? '任务书已生成。' : '全文 Prompt 已生成。');
+  } catch (error) { showToast(`${isBrief ? '任务书' : 'Prompt'}生成失败：${error.message}`); }
 }
 
+async function cancelProjectGeneration() {
+  dialogs.updateGenerationStatus({ active: false, label: '正在取消生成……' });
+  try {
+    const cancelled = await cancelServerProjectGeneration();
+    if (!cancelled) showToast('当前没有可取消的生成任务。');
+  } catch (error) { showToast(`取消失败：${error.message}`); }
+}
 async function saveProjectBrief() {
   const content = {};
   document.querySelectorAll('[data-brief-key]').forEach((field) => { content[field.dataset.briefKey] = field.value.trim(); });
@@ -685,7 +701,7 @@ async function saveProjectBrief() {
       await refreshCurrentServerProject();
     } else store.saveBrief(content);
     dialogs.closeModal();
-    showToast('冷启动任务书新版本已保存。');
+    showToast('任务书新版本已保存。');
   } catch (error) { showToast(`任务书保存失败：${error.message}`); }
 }
 
@@ -704,7 +720,6 @@ function downloadJson() {
   const artifact = buildProjectExportArtifact(project);
   downloadBlob(`${project.name}.json`, JSON.stringify(artifact, null, 2), 'application/json');
 }
-
 function downloadPromptCoachJson() {
   const project = store.getProject();
   const artifact = buildPromptCoachArtifact(project);
@@ -712,7 +727,6 @@ function downloadPromptCoachJson() {
   const filename = `${safeName}-Prompt-Coach-Structure.json`;
   downloadBlob(filename, JSON.stringify(artifact, null, 2), 'application/json');
 }
-
 function downloadPostEditJson() {
   const project = store.getProject();
   const artifact = buildPostEditCorpusArtifact(project);
@@ -721,20 +735,17 @@ function downloadPostEditJson() {
   const filename = `${safeName}-Post-Edit-Corpus.json`;
   downloadBlob(filename, JSON.stringify(artifact, null, 2), 'application/json');
 }
-
 function downloadHtml() {
   const project = store.getProject();
   const rows = project.segments.map((segment, index) => bilingualRow(segment, index)).join('');
   const html = `<!doctype html><meta charset="utf-8"><title>${escapeHtml(project.name)}</title><style>body{font-family:Arial;max-width:1100px;margin:40px auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:12px;vertical-align:top}th{background:#eee}</style><h1>${escapeHtml(project.name)}</h1><p>${project.direction}</p><table><tr><th>#</th><th>Source</th><th>Target</th><th>Prompt</th></tr>${rows}</table>`;
   downloadBlob(`${project.name}-双语.html`, html, 'text/html');
 }
-
 function bilingualRow(segment, index) {
   const current = segment.translations.find((item) => item.id === segment.currentTranslationId);
   const prompt = current ? store.getPrompt(current.promptId) : null;
   return `<tr><td>${index + 1}</td><td>${escapeHtml(segment.source)}</td><td>${escapeHtml(current?.postEditText || current?.aiText || '')}</td><td>${prompt ? `v${prompt.version} ${escapeHtml(prompt.title)}` : ''}</td></tr>`;
 }
-
 function downloadBlob(filename, content, type) {
   const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
   const link = Object.assign(document.createElement('a'), { href: url, download: filename });
@@ -742,10 +753,9 @@ function downloadBlob(filename, content, type) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   showToast('导出文件已生成。');
 }
-
 function handleShortcut(event) {
   if (!(event.ctrlKey || event.metaKey)) return;
-  if (event.key === 'Enter') return acceptCurrentAiPostEdit(event);
+  if (event.key === 'Enter') return handleTranslationConfirmation(event) || acceptCurrentAiPostEdit(event);
   if (event.key.toLowerCase() !== 's') return;
   const segment = store.getSegment();
   const trigger = document.querySelector(`[data-action="save-segment"][data-segment-id="${segment?.id}"]`);
@@ -753,7 +763,6 @@ function handleShortcut(event) {
   event.preventDefault();
   saveSegment(trigger);
 }
-
 function acceptCurrentAiPostEdit(event) {
   if (document.querySelector('.modal')) return;
   const segment = store.getSegment();
@@ -769,7 +778,6 @@ function acceptCurrentAiPostEdit(event) {
   event.preventDefault();
   applyAiPostEditResult(segment.id, true, '已通过 Ctrl+Enter 接受 AI 修改。');
 }
-
 const auth = await initializeAuth();
 let serverLoadError = '';
 if (auth.mode === 'server') {

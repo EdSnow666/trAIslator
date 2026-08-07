@@ -18,6 +18,8 @@ export function readProjectSetup() {
     promptMode: document.querySelector('#import-prompt-mode').value,
     briefVersionId: document.querySelector('#import-brief-version').value || undefined,
     promptVersionId: document.querySelector('#import-prompt-version').value || undefined,
+    briefLanguage: document.querySelector('#import-brief-language')?.value || 'zh-CN',
+    promptLanguage: document.querySelector('#import-prompt-language')?.value || 'zh-CN',
     briefContent: readBriefContent(),
     promptContent: document.querySelector('#import-prompt-manual').value.trim(),
   };

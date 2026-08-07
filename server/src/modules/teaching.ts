@@ -2,7 +2,7 @@
  * 职责: 管理班级成员与已分配项目，以及实验、阶段、状态和受试者
  * 依赖内部: ../auth/repository.ts, ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts
  * 依赖外部: 无
- * 暴露: 班级管理 | 实验列表、详情、阶段、受试者和状态管理
+ * 暴露: 班级管理 | listManagedSubmissions | 实验列表、详情、阶段、受试者和状态管理
  */
 
 import { normalizeUsername } from '../auth/repository.js';
@@ -75,6 +75,28 @@ export function listClasses(context: AppContext, user: AuthUser): ClassSummaryRo
   return classIdsForUser(context, user).map((id) => classSummary(context, id));
 }
 
+export function updateClass(context: AppContext, user: AuthUser, classId: string,
+  name: string, code: string): void {
+  ensureClassManage(context, user, classId);
+  if (!name.trim() || !code.trim()) throw new AppError(400, 'CLASS_FIELDS_REQUIRED', '班级名称和代码不能为空。');
+  const result = context.db.prepare(`UPDATE classes SET name = ?, code = ?, updated_at = ?, row_version = row_version + 1
+    WHERE id = ? AND deleted_at IS NULL`).run(name.trim(), code.trim(), nowIso(), classId);
+  if (!result.changes) throw new AppError(404, 'CLASS_NOT_FOUND', '班级不存在。');
+  recordActivity(context, { eventType: 'class.updated', actorUserId: user.id, metadata: { classId } });
+}
+
+export function dissolveClass(context: AppContext, user: AuthUser, classId: string): void {
+  ensureClassManage(context, user, classId);
+  const time = nowIso();
+  context.db.transaction(() => {
+    const result = context.db.prepare(`UPDATE classes SET status = 'archived', deleted_at = ?, updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL`).run(time, time, classId);
+    if (!result.changes) throw new AppError(404, 'CLASS_NOT_FOUND', '班级不存在。');
+    context.db.prepare("UPDATE project_assignments SET status = 'inactive' WHERE class_id = ? AND status = 'active'").run(classId);
+    recordActivity(context, { eventType: 'class.dissolved', actorUserId: user.id, metadata: { classId } });
+  }).immediate();
+}
+
 function listClassMembers(context: AppContext, classId: string): unknown[] {
   return context.db.prepare(`SELECT u.id, u.username, u.display_name AS displayName,
       cm.membership_role AS membershipRole, cm.status, cm.joined_at AS joinedAt,
@@ -121,6 +143,11 @@ export function addClassMember(context: AppContext, user: AuthUser, classId: str
 export function removeClassMember(context: AppContext, user: AuthUser, classId: string,
   memberUserId: string, role: 'teacher' | 'student'): void {
   ensureClassManage(context, user, classId);
+  const targetAdmin = context.db.prepare(`SELECT 1 FROM user_roles WHERE user_id = ? AND role_code = 'admin'`)
+    .get(memberUserId);
+  if (targetAdmin && !user.roles.includes('admin')) {
+    throw new AppError(403, 'ADMIN_MEMBER_PROTECTED', '教师不能移除系统管理员。');
+  }
   if (memberUserId === user.id && !user.roles.includes('admin')) {
     throw new AppError(409, 'CANNOT_REMOVE_SELF', '教师不能移除自己，请由管理员处理。');
   }
@@ -130,6 +157,50 @@ export function removeClassMember(context: AppContext, user: AuthUser, classId: 
   if (!result.changes) throw new AppError(404, 'MEMBERSHIP_NOT_FOUND', '未找到有效班级成员关系。');
   recordActivity(context, { eventType: 'class.member_removed', actorUserId: user.id,
     metadata: { classId, memberUserId, membershipRole: role } });
+}
+
+function managedProjectIds(context: AppContext, user: AuthUser): string[] {
+  const sql = user.roles.includes('admin')
+    ? `SELECT id FROM projects WHERE deleted_at IS NULL`
+    : `SELECT project_id AS id FROM project_managers WHERE user_id = ?
+       UNION SELECT pa.project_id AS id FROM project_assignments pa
+       JOIN class_memberships cm ON cm.class_id = pa.class_id
+       WHERE pa.status = 'active' AND cm.user_id = ? AND cm.membership_role = 'teacher'
+         AND cm.status = 'active'`;
+  const rows = user.roles.includes('admin') ? context.db.prepare(sql).all()
+    : context.db.prepare(sql).all(user.id, user.id);
+  return (rows as Array<{ id: string }>).map((row) => row.id);
+}
+
+function submittedPrompts(context: AppContext, projectIds: string[]): unknown[] {
+  const placeholders = projectIds.map(() => '?').join(',');
+  return context.db.prepare(`SELECT ps.id, ps.prompt_version_id AS promptVersionId, ps.status,
+      ps.submitted_at AS submittedAt, u.display_name AS submittedBy, u.username,
+      p.id AS projectId, p.name AS projectName, pv.version_number AS version,
+      pv.title, pv.content, pl.prompt_kind AS promptKind
+    FROM prompt_submissions ps JOIN prompt_versions pv ON pv.id = ps.prompt_version_id
+    JOIN prompt_lineages pl ON pl.id = pv.lineage_id JOIN projects p ON p.id = pl.project_id
+    JOIN users u ON u.id = ps.submitted_by WHERE p.id IN (${placeholders})
+    ORDER BY ps.submitted_at DESC`).all(...projectIds);
+}
+
+function submittedTranslations(context: AppContext, projectIds: string[]): unknown[] {
+  const placeholders = projectIds.map(() => '?').join(',');
+  return context.db.prepare(`SELECT ts.id, ts.translation_version_id AS translationVersionId,
+      ts.status, ts.submitted_at AS submittedAt, u.display_name AS submittedBy, u.username,
+      p.id AS projectId, p.name AS projectName, s.id AS segmentId, s.source_text AS source,
+      tv.content, tv.version_kind AS versionKind
+    FROM translation_submissions ts JOIN translation_versions tv ON tv.id = ts.translation_version_id
+    JOIN projects p ON p.id = ts.project_id JOIN segments s ON s.id = ts.segment_id
+    JOIN users u ON u.id = ts.submitted_by WHERE p.id IN (${placeholders})
+    ORDER BY ts.submitted_at DESC`).all(...projectIds);
+}
+
+export function listManagedSubmissions(context: AppContext, user: AuthUser): unknown {
+  const projectIds = managedProjectIds(context, user);
+  if (!projectIds.length) return { prompts: [], translations: [] };
+  return { prompts: submittedPrompts(context, projectIds),
+    translations: submittedTranslations(context, projectIds) };
 }
 
 export function createExperiment(context: AppContext, user: AuthUser, name: string,

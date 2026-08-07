@@ -1,15 +1,16 @@
 /**
- * 职责: 将当前项目状态渲染为 CAT 工作台、资源面板与版本导航
- * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ./ai-post-edit-view.js
+ * 职责: 将当前项目状态渲染为 CAT 工作台、可复用资源面板与版本导航
+ * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ../services/translation-drafts.js, ./ai-post-edit-view.js
  * 依赖外部: DOM API
  * 暴露: renderApp | escapeHtml | renderLiveDiff | renderAiHumanDiff | renderDiffParts | resizeTargetEditor
  */
 
-import { store } from '../state/store.js?v=20260805-04';
+import { store } from '../state/store.js';
+import { getTranslationDraft } from '../services/translation-drafts.js';
 import { buildDiff } from '../services/diff-engine.js';
-import { resolveAiPostEdit } from '../services/ai-post-edit.js?v=20260804-01';
-import { analyzePromptCoach } from '../services/prompt-coach.js?v=20260804-01';
-import { hasVisibleAiPostEdit, renderAiPostEditField } from './ai-post-edit-view.js?v=20260804-01';
+import { resolveAiPostEdit } from '../services/ai-post-edit.js';
+import { analyzePromptCoach } from '../services/prompt-coach.js';
+import { hasVisibleAiPostEdit, renderAiPostEditField } from './ai-post-edit-view.js';
 
 const STATUS_TEXT = {
   empty: '待生成',
@@ -17,6 +18,7 @@ const STATUS_TEXT = {
   'ai-edited': 'AI已编辑',
   edited: '已编辑',
   reviewed: '已确认',
+  submitted: '已提交教师',
 };
 
 export function escapeHtml(value = '') {
@@ -125,10 +127,22 @@ function promptCollaborationLabel(prompt) {
 }
 
 function renderPromptHistory(project) {
-  const prompts = [...project.prompts].sort((left, right) => right.version - left.version);
+  const switcher = document.querySelector('#prompt-kind-switch');
+  const kind = switcher?.dataset.kind || 'translation';
+  document.querySelectorAll('.rail-prompts-section [data-action="open-prompt-lineage"]')
+    .forEach((button) => { button.dataset.promptKind = kind; });
+  switcher.dataset.kind = kind;
+  switcher.className = `prompt-face-switch is-${kind}`;
+  switcher.innerHTML = `<button class="${kind === 'translation' ? 'is-active' : ''}" data-action="switch-left-prompt-kind" data-prompt-kind="translation">翻译</button>
+    <button class="${kind === 'post_edit' ? 'is-active' : ''}" data-action="switch-left-prompt-kind" data-prompt-kind="post_edit">译后编辑</button>`;
+  const activeId = kind === 'post_edit' ? project.activePostEditPromptId : project.activePromptId;
+  const prompts = project.prompts.filter((prompt) => !prompt.isArchived
+    && (prompt.promptKind || 'translation') === kind)
+    .sort((left, right) => Number(right.id === activeId)
+      - Number(left.id === activeId) || right.version - left.version);
   document.querySelector('#prompt-history').innerHTML = prompts.map((prompt) => {
     const status = promptCollaborationLabel(prompt);
-    return `<button class="prompt-history-item ${prompt.id === project.activePromptId ? 'is-active' : ''}" data-action="activate-prompt" data-prompt-id="${prompt.id}">
+    return `<button class="prompt-history-item ${prompt.id === activeId ? 'is-active' : ''}" data-action="activate-prompt" data-prompt-id="${prompt.id}">
       <span class="prompt-history-top"><span class="prompt-version">${escapeHtml(promptLabel(prompt))}</span><span class="prompt-author">${escapeHtml(prompt.author)} · ${escapeHtml(prompt.role)}</span></span>
       <span class="prompt-history-title">${escapeHtml(prompt.title)}</span>
       ${status ? `<span class="prompt-history-status">${escapeHtml(status)}</span>` : ''}
@@ -177,15 +191,17 @@ function segmentRow(state, project, segment, index) {
 
 function currentTarget(state, project, segment, index, current, prompt) {
   const target = current?.postEditText || current?.aiText || '';
+  const cached = current ? getTranslationDraft(project.id, segment.id, current.id) : null;
   const aiVisible = hasVisibleAiPostEdit(state, current);
   const draft = aiVisible ? store.getAiPostEditDraft(segment.id) : null;
   const aiEditing = Boolean(draft?.active);
+  const displayText = draft?.text ?? cached ?? target;
   const editor = aiVisible && !aiEditing
     ? renderAiPostEditField(project, segment, index, current)
-    : renderTargetTextarea(segment, index, draft?.text ?? target, aiEditing);
+    : renderTargetTextarea(segment, index, displayText, aiEditing);
   const draftText = aiEditing ? draft.text : undefined;
   const diff = state.diffMode
-    ? currentTargetDiff(current, target, project.direction, segment.id, aiVisible, draftText) : '';
+    ? currentTargetDiff(current, displayText, project.direction, segment.id, aiVisible, draftText) : '';
   return `${editor}${diff}${currentTargetActions(segment, current, prompt, aiVisible, aiEditing)}`;
 }
 
@@ -196,7 +212,7 @@ function currentTargetDiff(translation, target, direction, segmentId, aiVisible,
 function renderTargetTextarea(segment, index, target, isAiDraft = false) {
   const draftAttribute = isAiDraft ? ' data-ai-post-edit-draft="true"' : '';
   return `<textarea class="target-editor" data-segment-editor="${segment.id}"${draftAttribute} aria-label="第 ${index + 1} 句译文"
-    placeholder="尚无译文，请模拟生成">${escapeHtml(target)}</textarea>`;
+    placeholder="尚无译文，请输入或生成译文">${escapeHtml(target)}</textarea>`;
 }
 
 function currentTargetActions(segment, translation, prompt, aiVisible, aiEditing) {
@@ -246,9 +262,14 @@ function versionTarget(state, project, segment, index, translation) {
   const diff = state.diffMode && !hasAiVersion
     ? translationDiff(translation, target, project.direction, isCurrent ? segment.id : '') : '';
   return `<section class="embedded-version ${isCurrent ? 'is-current' : ''}">
-    <div class="embedded-version-header"><strong>译文 T${translationIndex} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${isCurrent ? '当前版本' : translation.createdAt}</span></div>
+    <div class="embedded-version-header"><strong>译文 T${translationIndex} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${translationSubmissionLabel(translation, isCurrent)}</span></div>
     ${editor}${diff}${versionActions(segment, translation, isCurrent, hasAiVersion)}
   </section>`;
+}
+
+function translationSubmissionLabel(translation, isCurrent) {
+  if (translation.submittedBy) return `已提交 · ${escapeHtml(translation.submittedBy)}`;
+  return isCurrent ? '当前版本' : escapeHtml(translation.createdAt);
 }
 
 function versionEditor(segment, index, target, isCurrent) {
@@ -397,6 +418,7 @@ export function renderDiffParts(parts) {
   }).join('');
 }
 function statusIcon(status) {
+  if (status === 'submitted') return '⇧';
   if (status === 'reviewed') return '✓';
   if (status === 'edited') return '✎';
   if (status === 'ai-edited') return '✦';
@@ -418,7 +440,7 @@ function renderRightPanel(state, project) {
   document.querySelector('#right-content').innerHTML = renderers[state.rightTab](project, state);
 }
 
-function renderPromptPanel(project) {
+function renderPromptPanel(project, state) {
   const segment = store.getSegment();
   const translation = store.getDetailTranslation(segment);
   if (!translation) return renderProjectPrompt(project);
@@ -428,10 +450,10 @@ function renderPromptPanel(project) {
   return `<div class="panel-kicker">SELECTED TRANSLATION</div><h2 class="panel-title">译文详情 T${translationIndex}</h2>
     ${translationMeta(project, segmentIndex, translationIndex, translation, prompt)}
     <div class="translation-detail-card"><div class="detail-label">所选译文</div><p>${escapeHtml(translation.postEditText || translation.aiText)}</p></div>
-    ${renderTranslationOrigin(project, segment, translation, prompt)}`;
+    ${renderTranslationOrigin(project, segment, translation, prompt, state)}`;
 }
 
-function renderTranslationOrigin(project, segment, translation, prompt) {
+function renderTranslationOrigin(project, segment, translation, prompt, state) {
   if (isManualTranslation(translation)) return `<div class="manual-translation-note"><strong>人工参考译文</strong>
     <p>此版本由用户手动翻译，不绑定任何 Prompt。</p></div>`;
   return `<div class="detail-label">绑定的 Prompt 快照</div>
@@ -439,7 +461,15 @@ function renderTranslationOrigin(project, segment, translation, prompt) {
     <p class="muted detail-note">这是该译文生成时冻结的快照。当前项目用于新生成的版本是 Prompt ${activePromptVersion(project)}。</p>
     <div class="prompt-action-stack"><button class="button button-secondary button-full" data-action="retranslate-with-prompt" data-segment-id="${segment.id}">用此 Prompt 重译</button>
       ${segment.currentTranslationId === translation.id ? `<button class="button button-secondary button-full" data-action="ai-post-edit-current" data-segment-id="${segment.id}" data-prompt-id="${prompt?.id || ''}">用此 Prompt AI 译后编辑</button>` : ''}
-      <button class="button button-primary button-full" data-action="new-prompt-from-editor">基于此快照创建新 Prompt</button></div>`;
+      <button class="button button-primary button-full" data-action="new-prompt-from-editor">基于此快照创建新 Prompt</button>
+      ${translationSubmitAction(state, segment, translation)}</div>`;
+}
+
+function translationSubmitAction(state, segment, translation) {
+  if (!state.serverMode || state.role !== 'student' || segment.currentTranslationId !== translation.id) return '';
+  if (translation.submittedAt) return '<span class="submission-state-label">✓ 当前译文已提交教师</span>';
+  return `<button class="button button-secondary button-full" data-action="submit-current-translation"
+    data-segment-id="${segment.id}">提交当前译文给教师</button>`;
 }
 
 function translationMeta(project, segmentIndex, translationIndex, translation, prompt) {
@@ -449,7 +479,6 @@ function translationMeta(project, segmentIndex, translationIndex, translation, p
     <div class="meta-row"><dt>译文状态</dt><dd>${translationStatus(translation)}</dd></div>
     <div class="meta-row"><dt>生成信息</dt><dd>${escapeHtml(translation.author)} · ${escapeHtml(translation.model)}</dd></div>
     <div class="meta-row"><dt>生成时间</dt><dd>${escapeHtml(translation.createdAt)}</dd></div>
-    <div class="meta-row"><dt>上下文</dt><dd>${escapeHtml(translation.contextSnapshot)}</dd></div>
   </dl></div>`;
 }
 
@@ -479,23 +508,26 @@ function renderProjectPrompt(project) {
     </div>`;
 }
 
-function renderTermsPanel(project) {
+export function renderTermsPanel(project) {
   const cards = project.terms.map((term) => `<div class="resource-card">
     <div class="resource-row"><strong>${escapeHtml(term.source)}</strong><span>→</span><strong>${escapeHtml(term.target)}</strong></div>
     <p>${escapeHtml(term.note || '项目统一译法')}</p></div>`).join('');
-  return `<div class="panel-heading"><div><div class="panel-kicker">TERMBASE</div><h2 class="panel-title">项目术语库</h2></div><button class="icon-button" data-action="add-term">＋</button></div>
+  const importButton = project.canManage ? '<button class="button button-soft" data-action="open-pair-import" data-import-kind="terms">导入术语库</button>' : '';
+  return `<div class="panel-heading"><div><div class="panel-kicker">TERMBASE</div><h2 class="panel-title">项目术语库</h2></div><div class="resource-heading-actions">${importButton}<button class="icon-button" data-action="add-term">＋</button></div></div>
     <p class="muted" style="font-size:10px">服务器版生成时会把已批准术语注入模型上下文，并保留来源。</p>${cards || '<div class="empty-state">尚未添加术语</div>'}`;
 }
 
-function renderTmPanel(project) {
+export function renderTmPanel(project) {
   const cards = project.tm.map((item) => `<div class="resource-card">
     <div class="resource-row"><strong>相似句</strong><span class="match-score">${item.match}%</span></div>
     <p>${escapeHtml(item.source)}</p><p style="color:var(--ink)">${escapeHtml(item.target)}</p></div>`).join('');
-  return `<div class="panel-kicker">TRANSLATION MEMORY</div><h2 class="panel-title">翻译记忆</h2>
+  const importButton = project.canManage ? '<button class="button button-soft" data-action="open-pair-import" data-import-kind="tm">导入翻译记忆</button>' : '';
+  const importPlus = project.canManage ? '<button class="icon-button" data-action="open-pair-import" data-import-kind="tm" title="上传翻译记忆">＋</button>' : '';
+  return `<div class="panel-heading"><div><div class="panel-kicker">TRANSLATION MEMORY</div><h2 class="panel-title">翻译记忆</h2></div><div class="resource-heading-actions">${importButton}${importPlus}</div></div>
     <p class="muted" style="font-size:10px">当前为浏览器端预存匹配结果，未来可替换为 TMX 检索服务。</p>${cards || '<div class="empty-state">尚无翻译记忆</div>'}`;
 }
 
-function renderMentorPanel(project) {
+export function renderMentorPanel(project) {
   const analysis = analyzePromptCoach(project);
   const cards = analysis.rules.map(renderCoachRule).join('');
   const summary = `已从 ${analysis.totalCount} 条 T2 中读取 ${analysis.editedCount} 组 AI 原译 → 人工编辑 Diff。`;

@@ -9,7 +9,8 @@ import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { addReferenceTranslation, recordGeneratedTranslation, saveAiDecision, saveHumanPostEdit,
-  selectCurrentVersion, workspaceTranslations, type GeneratedTranslationInput } from './translations.js';
+  confirmWorkspaceTranslations, selectCurrentVersion, submitWorkspaceTranslations,
+  workspaceTranslations, type GeneratedTranslationInput } from './translations.js';
 
 interface WorkspaceParams { workspaceId: string }
 interface ProjectParams { projectId: string }
@@ -20,6 +21,7 @@ interface PostEditBody {
 interface ReferenceBody { segmentId: string; content: string }
 interface CurrentBody { segmentId: string; translationVersionId: string; requestId?: string }
 interface DecisionBody { aiVersionId: string; changeId: string; decision: 'accepted' | 'rejected'; requestId?: string }
+interface BatchStateBody { segmentIds?: string[] }
 
 function registerTranslationReadRoutes(app: FastifyInstance, context: AppContext): void {
   app.get<{ Params: WorkspaceParams }>('/api/workspaces/:workspaceId/translations',
@@ -57,6 +59,14 @@ function registerTranslationStateRoutes(app: FastifyInstance, context: AppContex
         request.body.changeId, request.body.decision, request.body.requestId);
       return { ok: true };
     });
+  app.post<{ Params: WorkspaceParams; Body: BatchStateBody }>('/api/workspaces/:workspaceId/translations/confirm',
+    { preHandler: requireReadyAccount }, async (request) => ({
+      count: confirmWorkspaceTranslations(context, request.authUser!, request.params.workspaceId, request.body?.segmentIds),
+    }));
+  app.post<{ Params: WorkspaceParams; Body: BatchStateBody }>('/api/workspaces/:workspaceId/translations/submit',
+    { preHandler: requireReadyAccount }, async (request) => ({
+      count: submitWorkspaceTranslations(context, request.authUser!, request.params.workspaceId, request.body?.segmentIds),
+    }));
 }
 
 export function registerTranslationRoutes(app: FastifyInstance, context: AppContext): void {

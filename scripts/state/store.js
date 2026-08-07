@@ -5,10 +5,11 @@
  * 暴露: store
  */
 
-import { createDemoProjects } from '../data/demo-projects.js?v=20260804-01';
-import { createMockAiPostEdit, getAiPostEditParts, resolveAiPostEdit } from '../services/ai-post-edit.js?v=20260804-01';
+import { createDemoProjects } from '../data/demo-projects.js';
+import { createMockAiPostEdit, getAiPostEditParts, resolveAiPostEdit } from '../services/ai-post-edit.js';
 
 const STORAGE_KEY = 'translation-aiducator-demo-v1';
+const WORKSPACE_KEY = 'translation-aiducator-workspace-v1';
 const listeners = new Set();
 const aiPostEditDrafts = new Map();
 const AI_EXAMPLE_PROJECT_IDS = new Set(['demo-en-zh', 'demo-zh-en']);
@@ -31,6 +32,7 @@ function normalizeState(saved) {
   mergeAiPostEditExamples(projects, demos);
   mergeBundledProjectVersions(projects, demos);
   normalizeAiPostEditStates(projects);
+  normalizePromptKinds(projects);
   const project = projects.find((item) => item.id === saved.currentProjectId);
   const segment = project?.segments.find((item) => item.id === saved.currentSegmentId);
   const detailTranslationId = saved.detailTranslationId || segment?.currentTranslationId || null;
@@ -98,8 +100,24 @@ function normalizeAiPostEditStates(projects) {
     });
   }));
 }
+
+function normalizePromptKinds(projects) {
+  projects.forEach((project) => {
+    project.prompts.forEach((prompt) => { prompt.promptKind ||= 'translation'; });
+    const existing = project.prompts.find((prompt) => prompt.promptKind === 'post_edit');
+    if (existing) return void (project.activePostEditPromptId ||= existing.id);
+    const prompt = { id: `${project.id}-post-edit-v1`, lineageId: `${project.id}-post-edit`,
+      promptKind: 'post_edit', version: 1, displayLabel: 'v1', title: '结构译后编辑',
+      author: '系统', role: '教师', status: 'published', isPublished: true,
+      createdAt: '2026-08-06', note: '忽略术语问题，集中优化句子结构。',
+      content: '在不改变原意的前提下优化句法结构、衔接与简洁性；忽略术语替换，只输出编辑后的完整译文。' };
+    project.prompts.push(prompt);
+    project.activePostEditPromptId = prompt.id;
+  });
+}
 function createInitialState() {
   const projects = createDemoProjects();
+  normalizePromptKinds(projects);
   const segment = preferredSegment(projects[0]);
   return {
     projects,
@@ -123,7 +141,11 @@ function preferredSegment(project) {
 let state = loadState();
 
 function persist() {
-  if (state.serverMode) return;
+  if (state.serverMode) {
+    localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ currentProjectId: state.currentProjectId,
+      currentSegmentId: state.currentSegmentId }));
+    return;
+  }
   const safeState = structuredClone(state);
   safeState.apiConfig.apiKey = '';
   localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
@@ -147,8 +169,11 @@ function getPrompt(promptId) {
 }
 
 function setServerProjects(projects) {
-  const selected = projects.find((project) => project.id === state.currentProjectId) || projects[0];
-  const segment = preferredSegment(selected);
+  const preference = readWorkspacePreference();
+  const selectedId = state.serverMode ? state.currentProjectId : preference.currentProjectId;
+  const selected = projects.find((project) => project.id === selectedId) || projects[0];
+  const segment = selected.segments.find((item) => item.id === preference.currentSegmentId)
+    || preferredSegment(selected);
   state = {
     ...state,
     projects,
@@ -159,6 +184,11 @@ function setServerProjects(projects) {
   };
   aiPostEditDrafts.clear();
   emit();
+}
+
+function readWorkspacePreference() {
+  try { return JSON.parse(localStorage.getItem(WORKSPACE_KEY) || '{}'); }
+  catch { return {}; }
 }
 
 function replaceServerProject(project) {
@@ -257,22 +287,36 @@ function pauseAiPostEditDraft(segmentId) {
 }
 function setActivePrompt(promptId) {
   const project = getProject();
-  if (!project?.prompts.some((prompt) => prompt.id === promptId)) return;
-  project.activePromptId = promptId;
+  const prompt = project?.prompts.find((item) => item.id === promptId);
+  if (!prompt) return;
+  if (prompt.promptKind === 'post_edit') project.activePostEditPromptId = promptId;
+  else project.activePromptId = promptId;
   emit();
 }
 
-function savePromptVersion({ title, note, content, parentPromptId }) {
+
+function archivePromptVersion(promptId) {
   const project = getProject();
-  const version = Math.max(...project.prompts.map((prompt) => prompt.version), 0) + 1;
-  const prompt = createPrompt(project, version, title, note, content, parentPromptId);
+  if (!project || project.activePromptId === promptId) return false;
+  const index = project.prompts.findIndex((prompt) => prompt.id === promptId);
+  if (index < 0) return false;
+  project.prompts.splice(index, 1);
+  emit();
+  return true;
+}
+function savePromptVersion({ title, note, content, parentPromptId, promptKind = 'translation' }) {
+  const project = getProject();
+  const sameKind = project.prompts.filter((prompt) => (prompt.promptKind || 'translation') === promptKind);
+  const version = Math.max(...sameKind.map((prompt) => prompt.version), 0) + 1;
+  const prompt = createPrompt(project, version, title, note, content, parentPromptId, promptKind);
   project.prompts.push(prompt);
-  project.activePromptId = prompt.id;
+  if (promptKind === 'post_edit') project.activePostEditPromptId = prompt.id;
+  else project.activePromptId = prompt.id;
   emit();
   return prompt;
 }
 
-function createPrompt(project, version, title, note, content, parentPromptId) {
+function createPrompt(project, version, title, note, content, parentPromptId, promptKind) {
   return {
     id: `p-${project.id}-${Date.now()}`,
     version,
@@ -283,7 +327,9 @@ function createPrompt(project, version, title, note, content, parentPromptId) {
     createdAt: formatNow(),
     note: note || '基于课堂讨论创建的新版本。',
     content,
-    parentPromptId: parentPromptId || project.activePromptId || null,
+    promptKind,
+    parentPromptId: parentPromptId || (promptKind === 'post_edit'
+      ? project.activePostEditPromptId : project.activePromptId) || null,
   };
 }
 
@@ -529,6 +575,7 @@ export const store = {
   pauseAiPostEditDraft,
   setActivePrompt,
   savePromptVersion,
+  archivePromptVersion,
   savePostEdit,
   generateAiPostEdit,
   decideAiPostEdit,

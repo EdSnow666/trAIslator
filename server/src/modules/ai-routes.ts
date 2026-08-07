@@ -8,20 +8,24 @@
 import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
-import { executeAiTranslation, testServerModelConnection, type AiExecutionInput } from './ai-execution.js';
+import { cancelAiTranslation, executeAiTranslation, testServerModelConnection,
+  type AiExecutionInput } from './ai-execution.js';
+import { ensureProjectView } from './access.js';
 import { inspectPromptStructures } from './prompt-inspector.js';
-import { disableServerModel, listServerModels, saveServerModel, serverModelCapability,
+import { disableServerModel, listServerModelDirectory, listServerModels, saveServerModel, serverModelCapability,
   type ServerModelInput } from './server-models.js';
 
 interface ModelParams { modelConfigId: string }
 interface WorkspaceParams { workspaceId: string }
+interface CancelBody { requestId: string }
 interface InspectQuery { projectId: string; workspaceId?: string; segmentId?: string }
 
 function registerModelManagementRoutes(app: FastifyInstance, context: AppContext): void {
   app.get<{ Querystring: InspectQuery }>('/api/manage/prompt-structures',
-    { preHandler: requireRoles('admin') }, async (request) => (
-      inspectPromptStructures(context, request.query)
-    ));
+    { preHandler: requireReadyAccount }, async (request) => {
+      ensureProjectView(context, request.authUser!, request.query.projectId);
+      return inspectPromptStructures(context, request.query);
+    });
   app.get('/api/manage/server-models', { preHandler: requireRoles('admin', 'teacher') }, async () => ({
     models: listServerModels(context),
   }));
@@ -41,6 +45,9 @@ function registerModelManagementRoutes(app: FastifyInstance, context: AppContext
 }
 
 function registerAiExecutionRoutes(app: FastifyInstance, context: AppContext): void {
+  app.get('/api/ai/server-model-directory', { preHandler: requireReadyAccount }, async () => ({
+    models: listServerModelDirectory(context),
+  }));
   app.get('/api/ai/capabilities', { preHandler: requireReadyAccount }, async () => ({
     serverModelAvailable: serverModelCapability(context),
   }));
@@ -48,6 +55,11 @@ function registerAiExecutionRoutes(app: FastifyInstance, context: AppContext): v
     { preHandler: requireReadyAccount }, async (request, reply) => reply.code(201).send(
       await executeAiTranslation(context, request.authUser!, request.params.workspaceId, request.body),
     ));
+  app.post<{ Params: WorkspaceParams; Body: CancelBody }>('/api/workspaces/:workspaceId/ai/cancel',
+    { preHandler: requireReadyAccount }, async (request) => ({
+      cancelled: cancelAiTranslation(context, request.authUser!, request.params.workspaceId,
+        request.body.requestId),
+    }));
 }
 
 export function registerAiRoutes(app: FastifyInstance, context: AppContext): void {

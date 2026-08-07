@@ -24,11 +24,13 @@ interface VersionRow {
   base_translation_version_id: string | null; prompt_version_id: string | null;
   version_kind: string; content: string; created_at: string; display_name: string | null;
   model: string | null; context_manifest_json: string | null; sequence: number;
+  submitted_at: string | null; submitted_by_name: string | null;
 }
 interface PromptRow {
   id: string; lineage_id: string; parent_version_id: string | null; version_number: number; title: string; note: string; content: string;
   source_type: string; created_at: string; ownerUserId?: string | null;
-  submissionStatus?: string | null; publishedAt?: string | null;
+  submissionStatus?: string | null; publishedAt?: string | null; archivedAt?: string | null;
+  promptKind?: 'translation' | 'post_edit';
   parentTitle?: string | null; parentProjectName?: string | null;
   display_name?: string | null; display_roles?: string | null;
 }
@@ -65,9 +67,11 @@ function promptRole(prompt: PromptRow): string {
 function mapPrompt(prompt: PromptRow, user: AuthUser): unknown {
   const published = Boolean(prompt.publishedAt);
   const owned = prompt.ownerUserId === user.id;
+  const archived = Boolean(prompt.archivedAt);
   return {
     id: prompt.id,
     lineageId: prompt.lineage_id,
+    promptKind: prompt.promptKind || 'translation',
     parentPromptId: prompt.parent_version_id || null,
     parentTitle: prompt.parentTitle || null,
     parentProjectName: prompt.parentProjectName || null,
@@ -80,8 +84,10 @@ function mapPrompt(prompt: PromptRow, user: AuthUser): unknown {
     submissionStatus: prompt.submissionStatus || null,
     publishedAt: prompt.publishedAt || null,
     isPublished: published,
+    isArchived: archived,
+    archivedAt: prompt.archivedAt || null,
     isOwnedByCurrentUser: owned,
-    canSubmit: owned && !published && !prompt.submissionStatus,
+    canSubmit: owned && !published && !archived && !prompt.submissionStatus,
     createdAt: prompt.created_at,
     note: prompt.note,
     content: prompt.content,
@@ -92,12 +98,18 @@ function mapPrompt(prompt: PromptRow, user: AuthUser): unknown {
 function translationRows(context: AppContext, projectId: string, workspaceId?: string): VersionRow[] {
   return context.db.prepare(`SELECT tv.rowid AS sequence, tv.id, tv.segment_id, tv.parent_version_id,
       tv.base_translation_version_id, tv.prompt_version_id, tv.version_kind, tv.content, tv.created_at,
-      u.display_name, ar.model, ar.context_manifest_json
+      u.display_name, ar.model, ar.context_manifest_json,
+      (SELECT ts.submitted_at FROM translation_submissions ts WHERE ts.translation_version_id = tv.id
+        AND ts.status = 'submitted' ORDER BY ts.submitted_at DESC LIMIT 1) AS submitted_at,
+      (SELECT su.display_name FROM translation_submissions ts JOIN users su ON su.id = ts.submitted_by
+        WHERE ts.translation_version_id = tv.id AND ts.status = 'submitted'
+        ORDER BY ts.submitted_at DESC LIMIT 1) AS submitted_by_name
     FROM translation_versions tv
     LEFT JOIN users u ON u.id = tv.created_by
     LEFT JOIN ai_runs ar ON ar.id = tv.ai_run_id
     WHERE tv.project_id = ? AND (tv.scope_type = 'project' OR tv.workspace_id = ?)
-    ORDER BY tv.segment_id, tv.created_at, tv.rowid`).all(projectId, workspaceId || null) as VersionRow[];
+    ORDER BY tv.segment_id, tv.created_at, tv.rowid`)
+    .all(projectId, workspaceId || null) as VersionRow[];
 }
 
 function stateRows(context: AppContext, workspaceId?: string): Map<string, StateRow> {
@@ -196,6 +208,8 @@ function mapVersion(row: VersionRow, rowsById: Map<string, VersionRow>, prompts:
     serverVersionKind: row.version_kind,
     serverBaseVersionId: row.base_translation_version_id || row.parent_version_id || row.id,
     serverParentVersionId: row.parent_version_id,
+    submittedBy: row.submitted_by_name || '',
+    submittedAt: row.submitted_at || '',
   };
   if (row.version_kind === 'ai_post_edit') mapped.aiPostEdit = aiEdit(row, baseline, prompts, decisions);
   if (row.version_kind === 'human_post_edit') {
@@ -219,7 +233,9 @@ function mapSegment(segment: SegmentRow, versions: VersionRow[], prompts: Prompt
   return {
     id: segment.id,
     source: segment.source_text,
-    status: segmentStatus(rowsById.get(currentId || '')?.version_kind),
+    status: rowsById.get(currentId || '')?.submitted_at ? 'submitted'
+      : currentState?.status === 'confirmed' ? 'reviewed'
+        : segmentStatus(rowsById.get(currentId || '')?.version_kind),
     currentTranslationId: currentId,
     translations: versions.map((row) => mapVersion(row, rowsById, prompts, decisions)),
   };
@@ -228,18 +244,25 @@ function mapSegment(segment: SegmentRow, versions: VersionRow[], prompts: Prompt
 function canManageProject(context: AppContext, user: AuthUser, projectId: string): boolean {
   if (user.roles.includes('admin')) return true;
   return Boolean(context.db.prepare(`SELECT 1 FROM project_managers
-    WHERE project_id = ? AND user_id = ?`).get(projectId, user.id));
+      WHERE project_id = ? AND user_id = ? UNION SELECT 1 FROM project_assignments pa
+      JOIN class_memberships cm ON cm.class_id = pa.class_id
+      WHERE pa.project_id = ? AND pa.status = 'active' AND cm.user_id = ?
+        AND cm.membership_role = 'teacher' AND cm.status = 'active'`)
+    .get(projectId, user.id, projectId, user.id));
 }
 
 function activePromptId(context: AppContext, projectId: string, prompts: PromptRow[],
-  workspaceId?: string): string | null {
-  const workspace = workspaceId ? context.db.prepare(`SELECT active_prompt_version_id AS id
+  workspaceId: string | undefined, kind: 'translation' | 'post_edit'): string | null {
+  const column = kind === 'post_edit' ? 'active_post_edit_prompt_version_id' : 'active_prompt_version_id';
+  const workspace = workspaceId ? context.db.prepare(`SELECT ${column} AS id
     FROM project_workspaces WHERE id = ?`).get(workspaceId) as { id: string | null } | undefined : undefined;
-  if (workspace?.id && prompts.some((prompt) => prompt.id === workspace.id)) return workspace.id;
+  if (workspace?.id && prompts.some((prompt) => prompt.id === workspace.id
+    && prompt.promptKind === kind && !prompt.archivedAt)) return workspace.id;
   const published = context.db.prepare(`SELECT prompt_version_id AS id FROM project_prompt_publications
-    WHERE project_id = ? AND retired_at IS NULL ORDER BY published_at DESC LIMIT 1`)
-    .get(projectId) as { id: string } | undefined;
-  return published?.id || prompts[prompts.length - 1]?.id || null;
+    WHERE project_id = ? AND prompt_kind = ? AND retired_at IS NULL ORDER BY published_at DESC LIMIT 1`)
+    .get(projectId, kind) as { id: string } | undefined;
+  const available = prompts.filter((prompt) => prompt.promptKind === kind && !prompt.archivedAt);
+  return published?.id || available[available.length - 1]?.id || null;
 }
 
 function projectResources(context: AppContext, projectId: string) {
@@ -285,7 +308,8 @@ export function buildProjectSnapshot(context: AppContext, user: AuthUser,
     briefVersionId: brief?.id || null,
     briefPendingGeneration: Boolean(brief?.pendingGeneration),
     creationSource: project.creation_source,
-    activePromptId: activePromptId(context, projectId, prompts, workspaceId),
+    activePromptId: activePromptId(context, projectId, prompts, workspaceId, 'translation'),
+    activePostEditPromptId: activePromptId(context, projectId, prompts, workspaceId, 'post_edit'),
     prompts: prompts.map((prompt) => mapPrompt(prompt, user)),
     segments: segments.map((segment) => mapSegment(segment,
       versions.filter((row) => row.segment_id === segment.id), prompts, decisions, states.get(segment.id))),

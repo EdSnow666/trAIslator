@@ -133,8 +133,7 @@ function renderIdentity(user) {
   document.querySelector('#management-button').hidden = !manager;
   document.querySelector('#project-management-button').hidden = !manager;
   document.querySelector('#personal-key-project').hidden = manager;
-  document.querySelector('#personal-key-management').hidden = !manager;
-  document.querySelector('#prompt-inspector-button').hidden = !user.roles.includes('admin');
+  document.querySelector('#prompt-inspector-button').hidden = false;
   document.querySelector('.rail-footer span').textContent = '服务器版 · 已登录';
   logout.addEventListener('click', async () => {
     await apiRequest('/api/auth/logout', { method: 'POST' });

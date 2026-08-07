@@ -1,8 +1,8 @@
 /**
- * 职责: 管理可版本化冷启动任务书，并初始化项目任务书与全文 Prompt
+ * 职责: 管理可版本化 Translation Brief，并初始化项目任务书与全文 Prompt
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./prompt-structures.ts, ./prompts.ts
  * 依赖外部: 无
- * 暴露: listProjectResourceCatalog | currentProjectBrief | saveProjectBrief | generateProjectBrief | generateProjectPrompt | initializeProjectResources
+ * 暴露: listProjectResourceCatalog | currentProjectBrief | saveProjectBrief | generateProjectBrief | generateProjectPrompt | initializeProjectResources | GenerationOptions
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -12,8 +12,8 @@ import { jsonText, newId, nowIso } from '../shared.js';
 import { ensureProjectManage, ensureProjectView } from './access.js';
 import { recordActivity } from './activity.js';
 import { executeProjectTextGeneration } from './ai-execution.js';
-import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload,
-  promptGenerationPayload } from './prompt-structures.js';
+import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, generationInstruction,
+  promptGenerationPayload, type GenerationLanguage } from './prompt-structures.js';
 import { createPromptVersion, listVisiblePrompts } from './prompts.js';
 import { serverModelCapability } from './server-models.js';
 
@@ -27,6 +27,15 @@ export interface ResourceSetup {
   promptContent?: string;
   promptVersionId?: string;
   modelConfigId?: string;
+  briefLanguage?: GenerationLanguage;
+  promptLanguage?: GenerationLanguage;
+  deferGeneration?: boolean;
+}
+
+export interface GenerationOptions {
+  modelConfigId?: string | undefined;
+  outputLanguage?: GenerationLanguage | undefined;
+  requestId?: string | undefined;
 }
 
 interface BriefRow { id: string; project_id: string; content_json: string; source_type: string; sample_manifest_json: string; created_at: string }
@@ -60,7 +69,7 @@ export function currentProjectBrief(context: AppContext, user: AuthUser, project
 function inheritedBrief(context: AppContext, user: AuthUser, versionId: string) {
   const row = context.db.prepare(`SELECT project_id, content_json FROM project_brief_versions
     WHERE id = ?`).get(versionId) as { project_id: string; content_json: string } | undefined;
-  if (!row) throw new AppError(404, 'BRIEF_VERSION_NOT_FOUND', '所选冷启动任务书不存在。');
+  if (!row) throw new AppError(404, 'BRIEF_VERSION_NOT_FOUND', '所选任务书不存在。');
   ensureProjectView(context, user, row.project_id);
   return { content: normalizeBrief(parseJson(row.content_json, EMPTY_BRIEF)), projectId: row.project_id };
 }
@@ -102,11 +111,12 @@ function generatedBrief(content: string): BriefContent {
 }
 
 export async function generateProjectBrief(context: AppContext, user: AuthUser, projectId: string,
-  modelConfigId?: string): Promise<string> {
+  options: GenerationOptions = {}): Promise<string> {
   const payload = briefPayload(sourceSample(context, projectId));
   const generated = await executeProjectTextGeneration(context, user, projectId, {
-    operationType: 'style_identify', requestId: `brief-${newId()}`, ...(modelConfigId ? { modelConfigId } : {}),
-    systemInstruction: BRIEF_SYSTEM, payload,
+    operationType: 'style_identify', requestId: options.requestId || `brief-${newId()}`,
+    ...(options.modelConfigId ? { modelConfigId: options.modelConfigId } : {}),
+    systemInstruction: generationInstruction(BRIEF_SYSTEM, options.outputLanguage), payload,
   });
   return saveProjectBrief(context, user, projectId, generatedBrief(generated.content),
     'ai_generated', undefined, generated.runId);
@@ -117,21 +127,22 @@ function sourcePrompt(context: AppContext, user: AuthUser, versionId: string): s
     JOIN prompt_lineages pl ON pl.id = pv.lineage_id WHERE pv.id = ?`).get(versionId) as
     { project_id: string; content: string } | undefined;
   if (!row) throw new AppError(404, 'PROMPT_VERSION_NOT_FOUND', '所选 Prompt 不存在。');
-  const visible = listVisiblePrompts(context, user, row.project_id) as Array<{ id: string }>;
-  if (!visible.some((item) => item.id === versionId)) {
+  const visible = listVisiblePrompts(context, user, row.project_id) as Array<{ id: string; archivedAt?: string }>;
+  if (!visible.some((item) => item.id === versionId && !item.archivedAt)) {
     throw new AppError(403, 'PROMPT_VERSION_FORBIDDEN', '无权继承此 Prompt。');
   }
   return row.content;
 }
 
 export async function generateProjectPrompt(context: AppContext, user: AuthUser, projectId: string,
-  modelConfigId?: string): Promise<string> {
+  options: GenerationOptions = {}): Promise<string> {
   const brief = currentBriefRow(context, projectId);
   const payload = promptGenerationPayload(brief ? parseJson(brief.content_json, EMPTY_BRIEF) : EMPTY_BRIEF,
     sourceSample(context, projectId));
   const generated = await executeProjectTextGeneration(context, user, projectId, {
-    operationType: 'prompt_generate', requestId: `prompt-${newId()}`, ...(modelConfigId ? { modelConfigId } : {}),
-    systemInstruction: PROMPT_GENERATION_SYSTEM, payload,
+    operationType: 'prompt_generate', requestId: options.requestId || `prompt-${newId()}`,
+    ...(options.modelConfigId ? { modelConfigId: options.modelConfigId } : {}),
+    systemInstruction: generationInstruction(PROMPT_GENERATION_SYSTEM, options.outputLanguage), payload,
   });
   return createPromptVersion(context, user, projectId, { title: 'AI 生成全文 Prompt',
     note: '依据冷启动任务书与原文前 10 段自动生成。', content: generated.content,
@@ -150,11 +161,12 @@ function pendingPrompt(context: AppContext, user: AuthUser, projectId: string): 
 async function initializeBrief(context: AppContext, user: AuthUser, projectId: string,
   setup: ResourceSetup): Promise<boolean> {
   if (setup.briefMode === 'auto') {
-    if (!canGenerateNow(context, setup.modelConfigId)) {
+    if (setup.deferGeneration || !canGenerateNow(context, setup.modelConfigId)) {
       saveProjectBrief(context, user, projectId, {}, 'human', undefined, undefined, true);
       return false;
     }
-    try { await generateProjectBrief(context, user, projectId, setup.modelConfigId); return true; }
+    try { await generateProjectBrief(context, user, projectId, { modelConfigId: setup.modelConfigId,
+      outputLanguage: setup.briefLanguage }); return true; }
     catch { saveProjectBrief(context, user, projectId, {}, 'human', undefined, undefined, true); return false; }
   }
   if (setup.briefMode === 'inherit' && setup.briefVersionId) {
@@ -169,8 +181,11 @@ async function initializePrompt(context: AppContext, user: AuthUser, projectId: 
   const existing = context.db.prepare(`SELECT 1 FROM prompt_lineages WHERE project_id = ? LIMIT 1`).get(projectId);
   if (!setup.promptMode && existing) return;
   if (setup.promptMode === 'auto') {
-    if (!generationReady || !canGenerateNow(context, setup.modelConfigId)) return pendingPrompt(context, user, projectId);
-    try { await generateProjectPrompt(context, user, projectId, setup.modelConfigId); }
+    if (setup.deferGeneration || !generationReady || !canGenerateNow(context, setup.modelConfigId)) {
+      return pendingPrompt(context, user, projectId);
+    }
+    try { await generateProjectPrompt(context, user, projectId, { modelConfigId: setup.modelConfigId,
+      outputLanguage: setup.promptLanguage }); }
     catch { pendingPrompt(context, user, projectId); }
     return;
   }
@@ -197,12 +212,16 @@ export function listProjectResourceCatalog(context: AppContext, user: AuthUser):
       pbv.id AS briefVersionId, pbv.content_json AS briefContent,
       (SELECT pv.id FROM prompt_versions pv JOIN prompt_lineages pl ON pl.id = pv.lineage_id
         LEFT JOIN project_prompt_publications ppp ON ppp.prompt_version_id = pv.id AND ppp.retired_at IS NULL
-        WHERE pl.project_id = p.id AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
+        WHERE pl.project_id = p.id AND pl.prompt_kind = 'translation'
+          AND NOT EXISTS (SELECT 1 FROM prompt_version_archives pva
+          WHERE pva.prompt_version_id = pv.id) AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
           (p.project_kind = 'system_template' AND ? = 1))
         ORDER BY pv.created_at DESC LIMIT 1) AS promptVersionId,
       (SELECT pv.content FROM prompt_versions pv JOIN prompt_lineages pl ON pl.id = pv.lineage_id
         LEFT JOIN project_prompt_publications ppp ON ppp.prompt_version_id = pv.id AND ppp.retired_at IS NULL
-        WHERE pl.project_id = p.id AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
+        WHERE pl.project_id = p.id AND pl.prompt_kind = 'translation'
+          AND NOT EXISTS (SELECT 1 FROM prompt_version_archives pva
+          WHERE pva.prompt_version_id = pv.id) AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
           (p.project_kind = 'system_template' AND ? = 1))
         ORDER BY pv.created_at DESC LIMIT 1) AS promptContent
     FROM projects p LEFT JOIN project_managers pm ON pm.project_id = p.id AND pm.user_id = ?

@@ -1,16 +1,20 @@
 /**
- * 职责: 提供管理员和教师使用的统一服务器模型配置弹窗
+ * 职责: 提供管理员和教师使用的服务器模型与个人 API Key 合并管理弹窗
  * 依赖内部: ../services/auth-client.js, ./dialogs.js, ./render.js
  * 依赖外部: Fetch API, DOM API
  * 暴露: openModelManagementModal
  */
 
-import { apiRequest, currentAuth } from '../services/auth-client.js?v=20260805-02';
-import { showToast } from './dialogs.js?v=20260805-07';
-import { escapeHtml } from './render.js?v=20260805-04';
+import { apiRequest, currentAuth } from '../services/auth-client.js';
+import { showToast } from './dialogs.js';
+import { escapeHtml } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
-let modelState = { models: [], editingId: null, testingId: null, testResults: {} };
+let modelState = emptyState();
+
+function emptyState() {
+  return { models: [], keys: [], editingId: null, testingId: null, testResults: {}, tab: 'server' };
+}
 
 function canManageModels() {
   return currentAuth.mode === 'server'
@@ -43,6 +47,22 @@ function modelRows() {
   </div>`).join('');
 }
 
+function personalKeyRows() {
+  if (!modelState.keys.length) return '<div class="empty-state">尚未保存个人 API Key。</div>';
+  return modelState.keys.map((item) => `<div class="management-user-row model-list-row"><span><strong>${escapeHtml(item.label)}</strong>
+    <small>${escapeHtml(item.provider)} · ${item.lastUsedAt ? `最近使用 ${escapeHtml(item.lastUsedAt)}` : '尚未使用'}</small></span>
+    <span><em>${item.status === 'active' ? '已启用' : '已停用'}</em>${item.status === 'active'
+      ? `<button class="text-button danger-text" data-model-action="disable-key" data-key-id="${item.id}">停用</button>` : ''}</span></div>`).join('');
+}
+
+function personalKeyForm() {
+  return `<form class="management-panel" data-combined-key-form><h3>保存个人 Key</h3>
+    <label>接口类型<select class="field" name="provider"><option value="openai_compatible">OpenAI-compatible</option></select></label>
+    <label>名称<input class="field" name="label" required placeholder="例如 我的实验 Key"></label>
+    <label>API Key<input class="field" type="password" name="apiKey" required autocomplete="new-password" placeholder="页面不会回显"></label>
+    <button class="button button-primary" type="submit">加密保存</button></form>`;
+}
+
 function modelForm() {
   const item = editingModel();
   return `<form class="management-panel" data-model-form>
@@ -60,13 +80,31 @@ function modelForm() {
   </form>`;
 }
 
+function serverPane() {
+  return `<div class="management-account-layout model-management-layout">${modelForm()}
+    <section class="management-panel model-list-panel"><div class="management-section-head"><div><h3>统一模型</h3>
+      <p>学生和实验用户只使用已启用的默认配置，看不到 API Key。</p></div><span>${modelState.models.length} 个</span></div>
+      <div class="management-user-list model-rows">${modelRows()}</div></section></div>`;
+}
+
+function personalPane() {
+  return `<div class="management-account-layout model-management-layout">${personalKeyForm()}
+    <section class="management-panel model-list-panel"><div class="management-section-head"><div><h3>个人 Key</h3>
+      <p>只显示元数据；密钥明文不会回显，也不会随业务数据迁移。</p></div><span>${modelState.keys.length} 个</span></div>
+      <div class="management-user-list model-rows">${personalKeyRows()}</div></section></div>`;
+}
+
+function tabButton(tab, label) {
+  return `<button data-model-action="switch-tab" data-tab="${tab}" class="${modelState.tab === tab ? 'is-active' : ''}">${label}</button>`;
+}
+
 function modalMarkup() {
-  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal management-modal model-management-modal" role="dialog" aria-modal="true" aria-label="服务器模型配置" data-modal-stop>
-    <header class="modal-header"><div><div class="eyebrow">SERVER AI</div><h2>服务器模型配置</h2></div><button class="icon-button" data-action="close-modal">×</button></header>
-    <div class="modal-body management-body"><div class="management-account-layout">${modelForm()}
-      <section class="management-panel"><div class="management-section-head"><div><h3>统一模型</h3><p>学生和实验用户只使用已启用的默认配置，看不到 API Key。</p></div><span>${modelState.models.length} 个</span></div>
-        <div class="management-user-list">${modelRows()}</div></section></div></div>
-    <footer class="modal-footer"><span>Key 使用服务器主密钥加密；页面不会回显。</span><button class="button button-secondary" data-action="close-modal">关闭</button></footer>
+  const pane = modelState.tab === 'personal' ? personalPane() : serverPane();
+  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal management-modal model-management-modal" role="dialog" aria-modal="true" aria-label="模型与 API" data-modal-stop>
+    <header class="modal-header"><div><div class="eyebrow">AI CONNECTIONS</div><h2>模型与 API</h2></div><button class="icon-button" data-action="close-modal">×</button></header>
+    <div class="management-tabs model-management-tabs">${tabButton('server', '服务器模型')}${tabButton('personal', '个人 Key')}</div>
+    <div class="modal-body management-body">${pane}</div>
+    <footer class="modal-footer"><span>所有 Key 均加密保存且不会回显。</span><button class="button button-secondary" data-action="close-modal">关闭</button></footer>
   </section></div>`;
 }
 
@@ -75,9 +113,22 @@ function renderModels() {
 }
 
 async function loadModels() {
-  const result = await apiRequest('/api/manage/server-models');
-  modelState.models = result.models;
+  const [modelResult, keyResult] = await Promise.all([
+    apiRequest('/api/manage/server-models'), apiRequest('/api/me/api-keys'),
+  ]);
+  modelState.models = modelResult.models;
+  modelState.keys = keyResult.keys || [];
   if (!modelState.models.some((item) => item.id === modelState.editingId)) modelState.editingId = null;
+}
+
+async function savePersonalKey(form) {
+  const data = new FormData(form);
+  await apiRequest('/api/me/api-keys', { method: 'POST', body: JSON.stringify({
+    provider: data.get('provider'), label: data.get('label'), apiKey: data.get('apiKey'),
+  }) });
+  await loadModels();
+  renderModels();
+  showToast('个人 API Key 已加密保存。');
 }
 
 async function saveModel(form) {
@@ -96,11 +147,13 @@ async function saveModel(form) {
 
 async function handleModelSubmit(event) {
   const form = event.target.closest('[data-model-form]');
-  if (!form) return;
+  const keyForm = event.target.closest('[data-combined-key-form]');
+  if (!form && !keyForm) return;
   event.preventDefault();
-  const button = form.querySelector('[type="submit"]');
+  const activeForm = form || keyForm;
+  const button = activeForm.querySelector('[type="submit"]');
   button.disabled = true;
-  try { await saveModel(form); }
+  try { await (form ? saveModel(form) : savePersonalKey(keyForm)); }
   catch (error) { showToast(`保存失败：${error.message}`); button.disabled = false; }
 }
 
@@ -128,10 +181,22 @@ async function disableModel(id) {
   showToast('服务器模型配置已停用。');
 }
 
+async function disablePersonalKey(id) {
+  if (!window.confirm('停用这个个人 API Key 吗？')) return;
+  try {
+    await apiRequest(`/api/me/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadModels();
+    renderModels();
+    showToast('个人 API Key 已停用。');
+  } catch (error) { showToast(`停用失败：${error.message}`); }
+}
+
 async function handleModelClick(event) {
   const trigger = event.target.closest('[data-model-action]');
   if (!trigger) return;
   const action = trigger.dataset.modelAction;
+  if (action === 'switch-tab') { modelState.tab = trigger.dataset.tab; return renderModels(); }
+  if (action === 'disable-key') return disablePersonalKey(trigger.dataset.keyId);
   if (action === 'edit') { modelState.editingId = trigger.dataset.modelId; return renderModels(); }
   if (action === 'cancel-edit') { modelState.editingId = null; return renderModels(); }
   if (action === 'test') return testModel(trigger.dataset.modelId);
@@ -145,8 +210,8 @@ modalRoot.addEventListener('click', handleModelClick);
 
 export async function openModelManagementModal() {
   if (!canManageModels()) return showToast('服务器模型配置仅供已登录的管理员和教师使用。');
-  modelState = { models: [], editingId: null, testingId: null, testResults: {} };
-  modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal management-modal"><div class="management-loading">正在加载服务器模型配置…</div></section></div>';
+  modelState = emptyState();
+  modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal management-modal"><div class="management-loading">正在加载模型与 API 配置…</div></section></div>';
   try { await loadModels(); renderModels(); }
   catch (error) { modalRoot.innerHTML = ''; showToast(`模型配置加载失败：${error.message}`); }
 }

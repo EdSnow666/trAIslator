@@ -48,7 +48,7 @@ export function createSession(context: AppContext, row: CredentialRow, userAgent
   const id = newId();
   const token = randomBytes(32).toString('base64url');
   const createdAt = nowIso();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.parse(createdAt) + 24 * 60 * 60 * 1000).toISOString();
   context.db.prepare(`INSERT INTO sessions
     (id, user_id, token_hash, expires_at, created_at, last_seen_at, user_agent, ip_hash)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)

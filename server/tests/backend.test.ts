@@ -4,7 +4,6 @@
  * 依赖外部: node:assert, node:fs, node:http, node:os, node:path, node:test, fastify
  * 暴露: 后端集成测试
  */
-
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -18,8 +17,7 @@ import { openDatabase } from '../src/db/database.js';
 import { initializeAdmin } from '../src/ops/admin.js';
 import { runMigrationDeployment } from '../src/ops/deploy.js';
 import { seedDemoTemplates } from '../src/seed/demo-templates.js';
-interface Session { cookie: string; user: { mustChangePassword: boolean } }
-interface CreatedUser { id: string; password: string }
+interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
 interface ProjectScenario { projectId: string; workspaceId: string; segmentId: string; promptId: string }
 function respondMockModel(request: IncomingMessage, response: ServerResponse): void {
@@ -131,9 +129,9 @@ async function submitAndPublishPrompt(app: FastifyInstance, teacher: string, stu
     headers: { cookie: student } });
   assert.equal(submit.statusCode, 201, submit.body);
   assert.equal(repeated.json().id, submit.json().id);
-  const visible = await app.inject({ method: 'GET', url: `/api/projects/${projectId}/prompts`,
+  const visible = await app.inject({ method: 'GET', url: '/api/teaching/submissions',
     headers: { cookie: teacher } });
-  assert.equal(visible.json().prompts.some((item: { id: string }) => item.id === promptId), true);
+  assert.equal(visible.json().prompts.some((item: { promptVersionId: string }) => item.promptVersionId === promptId), true);
   const published = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/prompts/publish`,
     headers: { cookie: teacher }, payload: { promptVersionId: promptId } });
   assert.equal(published.statusCode, 201, published.body);
@@ -143,6 +141,8 @@ async function submitAndPublishPrompt(app: FastifyInstance, teacher: string, stu
   const unpublished = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/prompts/unpublish`,
     headers: { cookie: teacher }, payload: { promptVersionId: promptId } });
   assert.equal(unpublished.statusCode, 200, unpublished.body);
+  const history = await app.inject({ method: 'GET', url: `/api/projects/${projectId}/prompts`, headers: { cookie: teacher } });
+  assert.equal(history.json().prompts.some((item: { id: string }) => item.id === promptId), true);
   const publishedAgain = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/prompts/publish`,
     headers: { cookie: teacher }, payload: { promptVersionId: promptId } });
   assert.equal(publishedAgain.statusCode, 201, publishedAgain.body);
@@ -369,7 +369,6 @@ async function assertExperimentAudit(app: FastifyInstance, sessions: TestSession
     headers: { cookie: sessions.student.cookie } });
   assert.equal(denied.statusCode, 403);
 }
-
 async function exerciseExperimentManagement(app: FastifyInstance, sessions: TestSessions,
   projectId: string): Promise<void> {
   const setup = await createExperimentSetup(app, sessions.teacher.cookie);
@@ -400,7 +399,6 @@ function multipartBody(filename: string, content: string) {
   const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
   return { boundary, payload: Buffer.concat([head, Buffer.from(content), tail]) };
 }
-
 async function exerciseDocumentImport(app: FastifyInstance, sessions: TestSessions): Promise<void> {
   const upload = multipartBody('paragraphs.txt', 'One. Two.\n\nThree.');
   const headers = { cookie: sessions.student.cookie,
@@ -416,7 +414,6 @@ async function exerciseDocumentImport(app: FastifyInstance, sessions: TestSessio
   assert.equal(events.statusCode, 200, events.body);
   assert.equal(events.json().events.length, 1);
 }
-
 async function exerciseServerModelConfig(app: FastifyInstance, sessions: TestSessions,
   baseUrl: string): Promise<string> {
   const saved = await app.inject({ method: 'POST', url: '/api/manage/server-models',
@@ -445,7 +442,6 @@ async function exerciseServerModelConfig(app: FastifyInstance, sessions: TestSes
   assert.equal(tested.json().ok, true);
   return saved.json().id;
 }
-
 async function exerciseProviderErrorDetail(app: FastifyInstance, sessions: TestSessions,
   baseUrl: string): Promise<void> {
   const saved = await app.inject({ method: 'POST', url: '/api/manage/server-models',
@@ -474,7 +470,7 @@ async function exerciseRealAiExecution(app: FastifyInstance, sessions: TestSessi
   assert.equal(repeatedTranslation.json().translationVersionId, translation.json().translationVersionId);
   const postEdit = await app.inject({ method: 'POST',
     url: `/api/workspaces/${scenario.workspaceId}/ai/execute`, headers: { cookie: sessions.student.cookie },
-    payload: { segmentId: scenario.segmentId, promptVersionId: scenario.promptId,
+    payload: { segmentId: scenario.segmentId,
       baseVersionId: translation.json().translationVersionId,
       kind: 'ai_post_edit', requestId: 'real-post-edit-001' } });
   assert.equal(postEdit.statusCode, 201, postEdit.body);
@@ -486,7 +482,6 @@ async function exerciseRealAiExecution(app: FastifyInstance, sessions: TestSessi
   assert.equal(segment.translations.find((item: { id: string }) => item.id === postEdit.json().translationVersionId).aiText,
     'Structurally revised target.');
 }
-
 async function exerciseNoModelProjectCreation(app: FastifyInstance, sessions: TestSessions): Promise<string> {
   const catalog = await app.inject({ method: 'GET', url: '/api/project-resources/catalog',
     headers: { cookie: sessions.teacher.cookie } });
@@ -515,7 +510,6 @@ async function exerciseNoModelProjectCreation(app: FastifyInstance, sessions: Te
   assert.ok(inheritedSnapshot.json().project.prompts.some((item: { title: string }) => item.title.startsWith('继承：')));
   return projectId;
 }
-
 async function exerciseEditedResourceInheritance(app: FastifyInstance,
   sessions: TestSessions): Promise<void> {
   const catalog = await app.inject({ method: 'GET', url: '/api/project-resources/catalog',
@@ -562,7 +556,6 @@ async function exerciseDeferredGeneration(app: FastifyInstance, sessions: TestSe
   assert.equal(snapshot.json().project.briefPendingGeneration, false);
   assert.ok(snapshot.json().project.prompts.some((item: { title: string }) => item.title === 'AI 生成全文 Prompt'));
 }
-
 async function exerciseUnavailableModelFallback(app: FastifyInstance, sessions: TestSessions,
   workingId: string, workingBaseUrl: string): Promise<void> {
   const bad = await app.inject({ method: 'POST', url: '/api/manage/server-models',
@@ -588,7 +581,6 @@ async function exerciseUnavailableModelFallback(app: FastifyInstance, sessions: 
       provider: 'openai_compatible', baseUrl: workingBaseUrl, model: 'mock-translation-model', isDefault: true } });
   assert.equal(restored.statusCode, 201, restored.body);
 }
-
 async function exerciseProjectLifecycle(app: FastifyInstance, sessions: TestSessions,
   projectId: string, classId: string): Promise<void> {
   const unpublished = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/unpublish`,
@@ -701,7 +693,6 @@ async function runProjectScenario(app: FastifyInstance, sessions: TestSessions):
     setup.workspaceId, segmentId, ids);
   return { projectId: setup.created.projectId, workspaceId: setup.workspaceId, segmentId, promptId };
 }
-
 function verifySessionLifetime(databasePath: string): void {
   const db = openDatabase(databasePath);
   try {
@@ -713,7 +704,6 @@ function verifySessionLifetime(databasePath: string): void {
     }
   } finally { db.close(); }
 }
-
 function expireSessionsAndReadAdminHash(databasePath: string): string {
   const db = openDatabase(databasePath);
   try {
@@ -724,7 +714,6 @@ function expireSessionsAndReadAdminHash(databasePath: string): string {
     return row.hash;
   } finally { db.close(); }
 }
-
 function adminHash(databasePath: string): string {
   const db = openDatabase(databasePath);
   try { return (db.prepare("SELECT password_hash AS hash FROM users WHERE username = 'root-admin'").get() as { hash: string }).hash; }
@@ -758,9 +747,21 @@ async function exercisePromptInspector(app: FastifyInstance, sessions: TestSessi
   const operation = result.json().operations.find((item: { id: string }) => item.id === 'translation');
   const payload = JSON.parse(operation.messages[1].content);
   assert.equal(typeof payload.overarchingPrompt, 'string');
+  assert.ok(payload.projectBrief && typeof payload.projectBrief === 'object');
   assert.ok(Array.isArray(payload.terminology) && Array.isArray(payload.translationMemory));
-  const forbidden = await app.inject({ method: 'GET', url, headers: { cookie: sessions.teacher.cookie } });
-  assert.equal(forbidden.statusCode, 403, forbidden.body);
+  const teacherView = await app.inject({ method: 'GET', url, headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(teacherView.statusCode, 200, teacherView.body);
+  const archivedId = await createStudentPrompt(app, sessions.student.cookie, scenario.projectId);
+  const archived = await app.inject({ method: 'POST', url: `/api/prompts/${archivedId}/archive`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(archived.statusCode, 200, archived.body);
+  const snapshot = await app.inject({ method: 'GET', url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(snapshot.json().project.prompts.find((item: { id: string }) => item.id === archivedId).isArchived, true);
+  const managerWorkspace = await app.inject({ method: 'POST', url: `/api/projects/${scenario.projectId}/workspace`, headers: { cookie: sessions.admin.cookie } });
+  assert.equal(managerWorkspace.statusCode, 201, managerWorkspace.body);
+  const selected = await app.inject({ method: 'POST', url: `/api/workspaces/${managerWorkspace.json().id}/active-prompt`, headers: { cookie: sessions.admin.cookie }, payload: { promptVersionId: scenario.promptId } });
+  assert.equal(selected.statusCode, 200, selected.body);
 }
 test('发布版后端完成身份、隔离、模型调用和版本事件闭环', async () => {
   const mockModel = await startMockModel();

@@ -1,0 +1,86 @@
+/* 职责: Prompt 谱系单一管理菜单及轻量下拉操作样式 */
+.prompt-lineage-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.prompt-face-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  border: 1px solid #c7d0dc;
+  border-radius: 999px;
+  background: #edf0f4;
+  padding: 2px;
+}
+.prompt-face-switch button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 4px 9px;
+  color: #516071;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.prompt-face-switch button.is-active {
+  color: #fff;
+  box-shadow: 0 1px 4px rgb(25 52 82 / 16%);
+}
+.prompt-face-switch.is-translation button.is-active { background: #d66a2c; }
+.prompt-face-switch.is-translation { border-color: #d99a7b; background: #fff0e9; }
+.prompt-face-switch.is-post_edit button.is-active { background: #2463a7; }
+.prompt-face-switch.is-post_edit { border-color: #8eb0d4; background: #edf5ff; }
+.rail-prompts-section .prompt-face-switch { margin: 8px 0 10px; }
+.prompt-lineage-switch .prompt-face-switch button { padding: 7px 13px; font-size: 11px; }
+.prompt-lineage-switch .prompt-face-switch.is-translation button.is-active { background: #d66a2c; }
+.prompt-lineage-switch .prompt-face-switch.is-post_edit button.is-active { background: #2463a7; }
+.prompt-lineage-switch .prompt-face-switch.is-translation { border-color: #d99a7b; background: #fff0e9; }
+.prompt-lineage-switch .prompt-face-switch.is-post_edit { border-color: #8eb0d4; background: #edf5ff; }
+.rail-prompts-section .prompt-face-switch button { padding: 4px 9px; font-size: 9px; }
+.prompt-lineage-tools { display: flex; gap: 6px; margin-left: auto; }
+.prompt-lineage-tool { padding: 7px 12px; font-size: inherit; }
+.prompt-lineage-tool.is-active { border-color: #d66a2c; background: var(--surface); color: #a8471d; }
+#prompt-kind-switch.is-post_edit ~ #prompt-history .prompt-history-item {
+  border-color: #c8d8ea;
+  background: #f5f9ff;
+}
+#prompt-kind-switch.is-post_edit ~ #prompt-history .prompt-history-item.is-active {
+  border-color: #2463a7;
+  background: #e6f1ff;
+}
+#prompt-kind-switch.is-post_edit ~ #prompt-history .prompt-version { color: #2463a7; }
+#prompt-kind-switch.is-post_edit ~ #prompt-history .prompt-history-status {
+  background: #dcecff;
+  color: #194f87;
+}
+.prompt-lineage-actions > .button { padding: 7px 10px; }
+.prompt-management-menu { position: relative; }
+.prompt-management-menu > summary { list-style: none; cursor: pointer; user-select: none; }
+.prompt-management-menu > summary::-webkit-details-marker { display: none; }
+.prompt-management-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.prompt-management-popover button {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.prompt-management-popover button:hover,
+.prompt-management-popover button:focus-visible { background: var(--navy-soft); outline: none; }
+.prompt-management-popover .danger-text { color: var(--accent-dark); }

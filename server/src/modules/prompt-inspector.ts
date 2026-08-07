@@ -28,17 +28,19 @@ function sourceRows(context: AppContext, projectId: string): Array<{ id: string;
     ORDER BY d.document_order, s.segment_order LIMIT 10`).all(projectId) as Array<{ id: string; source: string }>;
 }
 
-function publishedPrompt(context: AppContext, projectId: string): PromptRow | null {
+function publishedPrompt(context: AppContext, projectId: string, kind: string): PromptRow | null {
   return context.db.prepare(`SELECT pv.id, pv.title, pv.content FROM project_prompt_publications ppp
     JOIN prompt_versions pv ON pv.id = ppp.prompt_version_id
-    WHERE ppp.project_id = ? AND ppp.retired_at IS NULL ORDER BY ppp.published_at DESC LIMIT 1`)
-    .get(projectId) as PromptRow | undefined || null;
+    WHERE ppp.project_id = ? AND ppp.prompt_kind = ? AND ppp.retired_at IS NULL
+    ORDER BY ppp.published_at DESC LIMIT 1`).get(projectId, kind) as PromptRow | undefined || null;
 }
 
-function activePrompt(context: AppContext, projectId: string, workspaceId?: string): PromptRow | null {
+function activePrompt(context: AppContext, projectId: string, kind: string,
+  workspaceId?: string): PromptRow | null {
   if (!workspaceId) return null;
+  const column = kind === 'post_edit' ? 'active_post_edit_prompt_version_id' : 'active_prompt_version_id';
   return context.db.prepare(`SELECT pv.id, pv.title, pv.content FROM project_workspaces pw
-    JOIN prompt_versions pv ON pv.id = pw.active_prompt_version_id
+    JOIN prompt_versions pv ON pv.id = pw.${column}
     WHERE pw.id = ? AND pw.project_id = ? AND pw.deleted_at IS NULL`).get(workspaceId, projectId) as PromptRow | undefined || null;
 }
 
@@ -73,7 +75,7 @@ function translationPayload(context: AppContext, project: ProjectRow, input: Ins
   segment: { id: string; source: string }, published: PromptRow | null, active: PromptRow | null) {
   return { sourceLanguage: project.sourceLanguage, targetLanguage: project.targetLanguage,
     source: segment.source, currentTranslation: currentTranslation(context, input.workspaceId, segment.id),
-    overarchingPrompt: published?.content || null,
+    projectBrief: brief(context, project.id), overarchingPrompt: published?.content || null,
     customPrompt: active && active.id !== published?.id ? active.content : null,
     ...resources(context, project.id) };
 }
@@ -83,15 +85,23 @@ export function inspectPromptStructures(context: AppContext, input: InspectInput
   const samples = sourceRows(context, project.id);
   const segment = samples.find((item) => item.id === input.segmentId) || samples[0];
   if (!segment) throw new AppError(404, 'PROJECT_SOURCE_EMPTY', '项目没有可检查的原文句段。');
-  const published = publishedPrompt(context, project.id);
-  const active = activePrompt(context, project.id, input.workspaceId);
-  const payload = translationPayload(context, project, input, segment, published, active);
+  const translationPublished = publishedPrompt(context, project.id, 'translation');
+  const translationActive = activePrompt(context, project.id, 'translation', input.workspaceId);
+  const postEditPublished = publishedPrompt(context, project.id, 'post_edit');
+  const postEditActive = activePrompt(context, project.id, 'post_edit', input.workspaceId);
+  const translationPayloadData = translationPayload(context, project, input, segment,
+    translationPublished, translationActive);
+  const postEditPayload = translationPayload(context, project, input, segment,
+    postEditPublished, postEditActive);
   const sampleText = samples.map((item) => item.source);
-  return { project, promptLayers: { overarching: published, custom: active?.id === published?.id ? null : active },
+  return { project, promptLayers: { translation: { overarching: translationPublished,
+      custom: translationActive?.id === translationPublished?.id ? null : translationActive },
+    postEdit: { overarching: postEditPublished,
+      custom: postEditActive?.id === postEditPublished?.id ? null : postEditActive } },
     operations: [
-      { id: 'translation', label: '翻译', messages: translationMessages('ai_translation', payload) },
-      { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', payload) },
-      { id: 'brief', label: '生成冷启动任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
+      { id: 'translation', label: '翻译', messages: translationMessages('ai_translation', translationPayloadData) },
+      { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', postEditPayload) },
+      { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
       { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,
         promptGenerationPayload(brief(context, project.id), sampleText)) },
     ] };

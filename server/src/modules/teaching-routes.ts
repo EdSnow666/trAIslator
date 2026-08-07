@@ -9,7 +9,8 @@ import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { addClassMember, classDetail, createClass, createExperiment, createExperimentStage,
-  enrollParticipant, experimentDetail, listClasses, listExperiments, removeClassMember,
+  dissolveClass, enrollParticipant, experimentDetail, listClasses, listExperiments, listManagedSubmissions, removeClassMember,
+  updateClass,
   setExperimentStatus, withdrawParticipant } from './teaching.js';
 
 interface ClassBody { name: string; code: string }
@@ -35,6 +36,16 @@ function registerClassRoutes(app: FastifyInstance, context: AppContext): void {
     async (request, reply) => reply.code(201).send({
       id: createClass(context, request.authUser!, request.body.name, request.body.code),
     }));
+  app.patch<{ Params: ClassParams; Body: ClassBody }>('/api/classes/:classId',
+    { preHandler: requireRoles('admin', 'teacher') }, async (request) => {
+      updateClass(context, request.authUser!, request.params.classId, request.body.name, request.body.code);
+      return { ok: true };
+    });
+  app.delete<{ Params: ClassParams }>('/api/classes/:classId',
+    { preHandler: requireRoles('admin', 'teacher') }, async (request) => {
+      dissolveClass(context, request.authUser!, request.params.classId);
+      return { ok: true };
+    });
 }
 
 function registerMembershipRoutes(app: FastifyInstance, context: AppContext): void {
@@ -53,6 +64,9 @@ function registerMembershipRoutes(app: FastifyInstance, context: AppContext): vo
 }
 
 function registerExperimentReadRoutes(app: FastifyInstance, context: AppContext): void {
+  app.get('/api/teaching/submissions', { preHandler: requireRoles('admin', 'teacher') }, async (request) => (
+    listManagedSubmissions(context, request.authUser!)
+  ));
   app.get('/api/experiments', { preHandler: requireRoles('admin', 'teacher') }, async (request) => ({
     experiments: listExperiments(context, request.authUser!),
   }));

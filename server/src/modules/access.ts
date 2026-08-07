@@ -37,6 +37,14 @@ function hasAssignedProject(context: AppContext, userId: string, projectId: stri
     .get(userId, userId, projectId));
 }
 
+function teachesAssignedProject(context: AppContext, userId: string, projectId: string): boolean {
+  return Boolean(context.db.prepare(`SELECT 1 FROM project_assignments pa
+    JOIN class_memberships cm ON cm.class_id = pa.class_id
+    WHERE pa.project_id = ? AND pa.status = 'active' AND cm.user_id = ?
+      AND cm.membership_role = 'teacher' AND cm.status = 'active' LIMIT 1`)
+    .get(projectId, userId));
+}
+
 export function ensureProjectView(context: AppContext, user: AuthUser, projectId: string): void {
   const kind = projectKind(context, projectId);
   if (!kind) throw new AppError(404, 'PROJECT_NOT_FOUND', '项目不存在。');
@@ -47,7 +55,8 @@ export function ensureProjectView(context: AppContext, user: AuthUser, projectId
 }
 
 export function ensureProjectManage(context: AppContext, user: AuthUser, projectId: string): void {
-  if (isAdmin(user) || managesProject(context, user.id, projectId)) return;
+  if (isAdmin(user) || managesProject(context, user.id, projectId)
+    || (isTeacher(user) && teachesAssignedProject(context, user.id, projectId))) return;
   throw new AppError(403, 'PROJECT_MANAGE_FORBIDDEN', '无权管理此项目。');
 }
 

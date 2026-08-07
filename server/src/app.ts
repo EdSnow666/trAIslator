@@ -23,6 +23,7 @@ import { registerAdminRoutes } from './modules/admin-routes.js';
 import { registerDocumentImportRoutes } from './modules/document-import.js';
 import { registerProjectRoutes } from './modules/project-routes.js';
 import { registerPromptRoutes } from './modules/prompt-routes.js';
+import { registerResourceImportRoutes } from './modules/resource-import-routes.js';
 import { registerTeachingRoutes } from './modules/teaching-routes.js';
 import { registerTranslationRoutes } from './modules/translation-routes.js';
 
@@ -34,6 +35,7 @@ function registerApi(app: FastifyInstance, context: ReturnType<typeof createAppC
   registerTeachingRoutes(app, context);
   registerProjectRoutes(app, context);
   registerPromptRoutes(app, context);
+  registerResourceImportRoutes(app, context);
   registerTranslationRoutes(app, context);
   registerActivityRoutes(app, context);
   registerDocumentImportRoutes(app, context);

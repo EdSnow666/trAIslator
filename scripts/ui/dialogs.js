@@ -1,14 +1,14 @@
 /**
- * 职责: 管理版本抽屉、Prompt 协作谱系、Diff、冷启动、导入与导出弹窗
+ * 职责: 管理版本抽屉、Prompt 谱系、Diff、任务书查看编辑、资源浏览、可取消生成、导入与导出弹窗
  * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ./render.js
  * 依赖外部: DOM API
  * 暴露: dialogs | showToast
  */
 
-import { store } from '../state/store.js?v=20260805-04';
+import { store } from '../state/store.js';
 import { buildDiff } from '../services/diff-engine.js';
-import { resolveAiPostEdit } from '../services/ai-post-edit.js?v=20260804-01';
-import { escapeHtml } from './render.js?v=20260805-04';
+import { resolveAiPostEdit } from '../services/ai-post-edit.js';
+import { escapeHtml, renderMentorPanel, renderTermsPanel, renderTmPanel } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 let projectResourceCatalog = [];
@@ -82,8 +82,8 @@ function versionCard(project, segment, item) {
   const displayText = hasAiVersion ? item.aiText : (item.postEditText || item.aiText);
   const revision = hasAiVersion ? '<span class="muted" style="font-size:9px">原始译文版本，不显示 Diff</span>' : versionRevision(project, item);
   return `<article class="version-card ${isCurrent ? 'is-current' : ''}">
-    <div class="version-meta"><strong>译文 T${index} · ${escapeHtml(versionSourceLabel(item, prompt))}</strong><span class="badge ${isCurrent ? 'badge-direction' : ''}">${isCurrent ? '当前显示' : item.createdAt}</span></div>
-    <p class="muted" style="font-size:9px">${escapeHtml(item.author)} · ${escapeHtml(item.model)} · ${escapeHtml(item.contextSnapshot)}</p>
+    <div class="version-meta"><strong>译文 T${index} · ${escapeHtml(versionSourceLabel(item, prompt))}</strong><span class="badge ${isCurrent ? 'badge-direction' : ''}">${item.submittedBy ? `已提交 · ${escapeHtml(item.submittedBy)}` : (isCurrent ? '当前显示' : item.createdAt)}</span></div>
+    <p class="muted" style="font-size:9px">${escapeHtml(item.author)} · ${escapeHtml(item.model)}</p>
     <div class="version-text">${escapeHtml(displayText)}</div>
     ${revision}${drawerBaseVersionAction(segment, item, isCurrent, hasAiVersion)}
     ${versionPromptSnapshot(item)}
@@ -132,6 +132,7 @@ function versionRevision(project, item) {
 
 function versionPromptSnapshot(item) {
   if (isManualTranslation(item)) return '<div class="manual-translation-note is-compact"><strong>无 Prompt</strong><p>由用户手动翻译。</p></div>';
+  if (!item.promptSnapshot) return '<p class="muted" style="font-size:9px">绑定版本不在当前 Prompt 谱系中，不显示完整后台发送结构。</p>';
   return `<details style="margin-top:12px"><summary class="text-button" style="cursor:pointer">查看绑定的完整 Prompt 快照</summary><div class="prompt-snapshot">${escapeHtml(item.promptSnapshot)}</div></details>`;
 }
 
@@ -168,39 +169,83 @@ function renderDiff(parts) {
 
 function briefGenerateButton(project) {
   if (!store.getState().serverMode || !project.canManage) return '';
-  const label = project.briefPendingGeneration ? '生成冷启动任务书' : '重新自动生成';
+  const label = project.briefPendingGeneration ? '生成任务书' : '重新自动生成';
   return `<button class="button button-soft" data-action="generate-project-resource"
     data-resource="brief">${label}</button>`;
+}
+
+function briefViewRows(project) {
+  return Object.keys({ genre: '', skopos: '', audience: '', register: '', strategy: '' })
+    .map((key) => `<tr><th>${briefLabel(key)}</th><td>${escapeHtml(project.brief?.[key] || '尚未填写')}</td></tr>`).join('');
+}
+
+function briefPendingNote(project) {
+  return project.briefPendingGeneration
+    ? '<p class="generation-note">当前任务书等待自动生成，也可以进入编辑模式手动填写。</p>' : '';
 }
 
 function openBriefModal() {
   const project = store.getProject();
   const editable = !store.getState().serverMode || project.canManage;
-  const fields = Object.keys({ genre: '', skopos: '', audience: '', register: '', strategy: '' })
-    .map((key) => `<label>${briefLabel(key)}<textarea class="field field-full brief-edit-field"
-      data-brief-key="${key}" ${editable ? '' : 'readonly'}>${escapeHtml(project.brief?.[key] || '')}</textarea></label>`).join('');
-  const pending = project.briefPendingGeneration
-    ? '<p class="muted">当前任务书等待生成；配置服务器模型后可点击下方按钮生成，也可以直接手动填写。</p>' : '';
-  const body = `<div class="eyebrow">IDENTIFICATION · COLD START</div>
-    <p class="muted">当前任务书会与项目 Prompt、术语、TM 和相邻句段一起编译。保存修改会新增一个可追溯版本。</p>${pending}
-    <div class="brief-edit-grid">${fields}</div>`;
-  const footer = editable ? `<button class="button button-ghost" data-action="close-modal">取消</button>${briefGenerateButton(project)}
-    <button class="button button-primary" data-action="save-project-brief">保存任务书新版本</button>`
-    : '<button class="button button-secondary" data-action="close-modal">关闭</button>';
-  modal('冷启动任务书', body, footer);
+  const body = `<div class="eyebrow">TRANSLATION BRIEF</div>
+    <p class="muted">查看当前任务书；翻译与 AI 译后编辑时会将它作为独立上下文层发送给模型。</p>
+    ${briefPendingNote(project)}<table class="brief-view-table"><tbody>${briefViewRows(project)}</tbody></table>`;
+  const edit = editable ? '<button class="button button-primary" data-action="edit-project-brief">编辑任务书</button>' : '';
+  const footer = `${briefGenerateButton(project)}${edit}<button class="button button-ghost" data-action="close-modal">关闭</button>`;
+  modal('任务书 · 查看', body, footer);
 }
 
+function openBriefEditModal() {
+  const project = store.getProject();
+  const fields = Object.keys({ genre: '', skopos: '', audience: '', register: '', strategy: '' })
+    .map((key) => `<label>${briefLabel(key)}<textarea class="field field-full brief-edit-field"
+      data-brief-key="${key}">${escapeHtml(project.brief?.[key] || '')}</textarea></label>`).join('');
+  const body = `<p class="muted">保存会新增一个可追溯任务书版本，不覆盖历史版本。</p>
+    <div class="brief-edit-grid">${fields}</div>`;
+  const footer = '<button class="button button-ghost" data-action="open-project-brief">返回查看</button>'
+    + '<button class="button button-primary" data-action="save-project-brief">保存任务书新版本</button>';
+  modal('任务书 · 编辑', body, footer);
+}
 function briefLabel(key) {
   return { genre: '文本类型', skopos: '翻译目的', audience: '目标读者', register: '语域', strategy: '策略' }[key] || key;
 }
 
-function openPromptLineageModal() {
+let promptLineageKind = 'translation';
+let showArchivedPrompts = false;
+
+function openPromptLineageModal(options = {}) {
   const project = store.getProject();
-  const items = [...project.prompts].sort((a, b) => b.version - a.version);
+  if (options.dataset?.promptKind) options = { kind: options.dataset.promptKind };
+  if (options.kind) promptLineageKind = options.kind;
+  if (typeof options.showArchived === 'boolean') showArchivedPrompts = options.showArchived;
+  const activeId = promptLineageKind === 'post_edit'
+    ? project.activePostEditPromptId : project.activePromptId;
+  const items = project.prompts.filter((prompt) => (prompt.promptKind || 'translation') === promptLineageKind
+    && (showArchivedPrompts ? prompt.isArchived : !prompt.isArchived))
+    .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId) || b.version - a.version);
   const cards = items.map((prompt) => promptLineageCard(project, prompt)).join('');
-  const body = `<p class="muted prompt-lineage-intro">每个版本均保留完整内容、作者、提交状态和修改说明。学生候选只有主动提交后教师才能看到；教师发布只影响项目默认 Prompt。</p>
-    <div class="prompt-lineage-modal">${cards}</div>`;
-  modal('Prompt 谱系', body, '<button class="button button-ghost" data-action="close-modal">关闭</button>');
+  const body = `<div class="prompt-lineage-switch"><div class="prompt-face-switch is-${promptLineageKind}">
+    <button class="${promptLineageKind === 'translation' ? 'is-active' : ''}"
+      data-action="switch-prompt-lineage" data-prompt-kind="translation">翻译 Prompt</button>
+    <button class="${promptLineageKind === 'post_edit' ? 'is-active' : ''}"
+      data-action="switch-prompt-lineage" data-prompt-kind="post_edit">译后编辑 Prompt</button></div>
+    <div class="prompt-lineage-tools"><button class="button button-primary prompt-lineage-tool" data-action="open-new-prompt-version"
+      data-prompt-kind="${promptLineageKind}">新建</button>
+    <button class="button button-ghost prompt-lineage-tool ${showArchivedPrompts ? 'is-active' : ''}"
+      data-action="toggle-archived-prompts" aria-pressed="${showArchivedPrompts}">已归档</button></div></div>
+    <p class="muted prompt-lineage-intro">${showArchivedPrompts ? '这里只显示已归档版本；恢复后会重新回到正常谱系。' : '当前 Prompt 固定在顶部。归档版本不会丢失，也可随时查看或恢复。'}</p>
+    <div class="prompt-lineage-modal">${cards || `<div class="empty-state">暂无已归档的${promptLineageKind === 'post_edit' ? '译后编辑' : '翻译'} Prompt。</div>`}</div>`;
+  modal(`${promptLineageKind === 'post_edit' ? '译后编辑' : '翻译'} Prompt 谱系`, body,
+    '<button class="button button-ghost" data-action="close-modal">关闭</button>');
+}
+
+function switchPromptLineage(trigger) {
+  openPromptLineageModal({ kind: trigger.dataset.promptKind });
+}
+
+function toggleArchivedPrompts() {
+  showArchivedPrompts = !showArchivedPrompts;
+  openPromptLineageModal();
 }
 
 function submissionBadge(prompt) {
@@ -215,28 +260,37 @@ function submissionBadge(prompt) {
     : '';
 }
 
+function promptStatusBadges(prompt, isActive) {
+  const badges = [];
+  if (isActive) badges.push('<span class="badge badge-direction">当前使用</span>');
+  if (prompt.isPublished) badges.push('<span class="badge prompt-published-badge">项目发布版</span>');
+  if (prompt.isArchived) badges.push('<span class="badge">已归档</span>');
+  badges.push(submissionBadge(prompt));
+  return badges.join('');
+}
+
+function promptManagementItems(project, prompt, isActive) {
+  const items = [];
+  if (!prompt.isArchived) items.push(`<button data-action="edit-prompt-version" data-prompt-id="${prompt.id}">新增修改版本</button>`);
+  if (prompt.isArchived) {
+    items.push(`<button data-action="restore-prompt" data-prompt-id="${prompt.id}">恢复归档</button>`);
+  } else if (prompt.isOwnedByCurrentUser || project.canManage) {
+    items.push(`<button data-action="request-delete-prompt" data-prompt-id="${prompt.id}">归档</button>`);
+  }
+  if (project.canManage) {
+    const action = prompt.isPublished ? 'unpublish-prompt' : 'publish-prompt';
+    items.push(`<button data-action="${action}" data-prompt-id="${prompt.id}">${prompt.isPublished ? '取消发布' : '发布为项目 Prompt'}</button>`);
+  }
+  if (prompt.canSubmit) items.push(`<button data-action="submit-prompt" data-prompt-id="${prompt.id}">提交给教师</button>`);
+  return items.join('');
+}
+
 function promptLineageActions(project, prompt, isActive) {
-  const actions = [];
-  if (isActive) actions.push('<span class="badge badge-direction">当前使用</span>');
-  if (prompt.isPublished) actions.push('<span class="badge prompt-published-badge">项目发布版</span>');
-  if (project.canManage && prompt.isPublished) {
-    actions.push(`<button class="button button-soft" data-action="unpublish-prompt"
-      data-prompt-id="${prompt.id}">取消发布</button>`);
-  }
-  if (!isActive && (!store.getState().serverMode || project.workspaceId)) {
-    actions.push(`<button class="button button-soft" data-action="activate-prompt"
-      data-prompt-id="${prompt.id}">设为当前 Prompt</button>`);
-  }
-  if (prompt.canSubmit) {
-    actions.push(`<button class="button button-soft" data-action="submit-prompt"
-      data-prompt-id="${prompt.id}">提交给教师</button>`);
-  }
-  if (project.canManage && !prompt.isPublished) {
-    actions.push(`<button class="button button-primary" data-action="publish-prompt"
-      data-prompt-id="${prompt.id}">发布为项目 Prompt</button>`);
-  }
-  actions.push(submissionBadge(prompt));
-  return `<div class="prompt-lineage-actions">${actions.join('')}</div>`;
+  const items = promptManagementItems(project, prompt, isActive);
+  return `<div class="prompt-lineage-actions">${promptStatusBadges(prompt, isActive)}
+    ${!isActive && !prompt.isArchived ? `<button class="button button-primary" data-action="activate-prompt" data-prompt-id="${prompt.id}">设为当前 Prompt</button>` : ''}
+    <details class="prompt-management-menu"><summary class="button button-soft">管理</summary>
+      <div class="prompt-management-popover">${items}</div></details></div>`;
 }
 
 function promptParentNote(project, prompt) {
@@ -248,7 +302,9 @@ function promptParentNote(project, prompt) {
   return `<p class="prompt-lineage-meta">继承自：${escapeHtml(source)}</p>`;
 }
 function promptLineageCard(project, prompt) {
-  const isActive = prompt.id === project.activePromptId;
+  const activeId = promptLineageKind === 'post_edit'
+    ? project.activePostEditPromptId : project.activePromptId;
+  const isActive = prompt.id === activeId;
   return `<article class="prompt-lineage-card ${isActive ? 'is-active' : ''}">
     <header class="prompt-lineage-card-header"><div><span class="prompt-version">${escapeHtml(promptLabel(prompt))}</span><strong>${escapeHtml(prompt.title)}</strong></div>
       ${promptLineageActions(project, prompt, isActive)}</header>
@@ -264,11 +320,12 @@ function promptSubmitOption(state, project) {
     <span><strong>保存后提交给教师</strong><small>不勾选时仅自己可见，也可以稍后在 Prompt 谱系中提交。</small></span></label>`;
 }
 
-function promptSources(project) {
-  const current = project.prompts.map((prompt) => ({ ...prompt, projectName: project.name }));
+function promptSources(project, kind = 'translation') {
+  const matchesKind = (prompt) => (prompt.promptKind || 'translation') === kind && !prompt.isArchived;
+  const current = project.prompts.filter(matchesKind).map((prompt) => ({ ...prompt, projectId: project.id, projectName: project.name }));
   const catalog = projectResourceCatalog.length ? projectResourceCatalog : store.getState().projects;
   const external = catalog.filter((item) => item.id !== project.id)
-    .flatMap((item) => item.prompts.map((prompt) => ({ ...prompt, projectName: item.name })));
+    .flatMap((item) => item.prompts.filter(matchesKind).map((prompt) => ({ ...prompt, projectId: item.id, projectName: item.name })));
   const seen = new Set();
   return [...current, ...external].filter((prompt) => {
     if (seen.has(prompt.id)) return false;
@@ -277,14 +334,15 @@ function promptSources(project) {
   });
 }
 
-function promptBaseOptions(project, selectedId) {
-  return promptSources(project).map((prompt) => (
+function promptBaseOptions(project, selectedId, kind) {
+  return promptSources(project, kind).map((prompt) => (
     `<option value="${prompt.id}" ${prompt.id === selectedId ? 'selected' : ''}>${escapeHtml(prompt.projectName)} · ${escapeHtml(promptLabel(prompt))} · ${escapeHtml(prompt.title)}</option>`
   )).join('') || '<option value="">暂无可用 Prompt</option>';
 }
 
 function findPromptSource(promptId) {
-  return promptSources(store.getProject()).find((prompt) => prompt.id === promptId) || null;
+  const kind = modalRoot.querySelector('#prompt-kind')?.value || 'translation';
+  return promptSources(store.getProject(), kind).find((prompt) => prompt.id === promptId) || null;
 }
 
 function promptBaseSelection() {
@@ -310,19 +368,76 @@ function openPromptModal(content = '', options = {}) {
   const project = store.getProject();
   const title = escapeHtml(options.title || '课堂共创优化');
   const note = escapeHtml(options.note || '根据课堂讨论调整翻译策略');
-  const selectedId = options.basePromptId || project.activePromptId;
-  const body = `<div class="form-group"><label for="prompt-title">版本名称</label><input id="prompt-title" class="field field-full" value="${title}"></div>
+  const kind = options.promptKind || promptLineageKind || 'translation';
+  const selectedId = options.basePromptId || (kind === 'post_edit'
+    ? project.activePostEditPromptId : project.activePromptId);
+  const body = `<input id="prompt-kind" type="hidden" value="${kind}"><div class="form-group"><label for="prompt-title">版本名称</label><input id="prompt-title" class="field field-full" value="${title}"></div>
     <div class="form-group"><label for="prompt-note">修改说明</label><input id="prompt-note" class="field field-full" value="${note}"></div>
     <label class="prompt-submit-option"><input id="prompt-use-base" type="checkbox"><span><strong>在已有 Prompt 基础上修改</strong><small>确认后选择当前项目或其他项目中可见的 Prompt，并复制到编辑框。</small></span></label>
     <div class="form-group" data-prompt-base-controls hidden><label for="prompt-base-version">选择基础 Prompt</label>
-      <select id="prompt-base-version" class="field field-full">${promptBaseOptions(project, selectedId)}</select>
+      <select id="prompt-base-version" class="field field-full">${promptBaseOptions(project, selectedId, kind)}</select>
       <p class="muted">选择后只复制内容，原 Prompt 不会被修改。</p></div>
     <div class="form-group"><label for="prompt-content">新 Prompt 内容</label><textarea id="prompt-content" class="field field-full">${escapeHtml(content)}</textarea></div>
     ${promptSubmitOption(state, project)}
     <p class="muted prompt-save-note">保存后创建不可变候选版本；既有译文继续绑定原 Prompt。</p>`;
   const saveLabel = state.serverMode ? '保存候选版本' : '发布新版本';
-  modal('创建 Prompt 新版本', body, `<button class="button button-ghost" data-action="close-modal">取消</button>
+  modal(`创建${kind === 'post_edit' ? '译后编辑' : '翻译'} Prompt 新版本`, body, `<button class="button button-ghost" data-action="close-modal">取消</button>
     <button class="button button-primary" data-action="save-prompt-version">${saveLabel}</button>`);
+  if (options.useBase) {
+    modalRoot.querySelector('#prompt-use-base').checked = true;
+    updatePromptBaseVisibility();
+  }
+}
+
+function openPromptArchiveConfirm(prompt) {
+  const body = `<p>确定归档 <strong>${escapeHtml(promptLabel(prompt))} · ${escapeHtml(prompt.title)}</strong> 吗？</p>
+    <p class="muted">归档不会删除内容或追溯关系；之后可在 Prompt 谱系中查看并恢复。</p>`;
+  modal('归档 Prompt 版本', body, `<button class="button button-ghost" data-action="open-prompt-lineage">取消</button>
+    <button class="button button-primary" data-action="delete-prompt" data-prompt-id="${prompt.id}">确认归档</button>`);
+}
+
+function openNewPromptVersion(trigger) {
+  openPromptModal('', { promptKind: trigger.dataset.promptKind || promptLineageKind });
+}
+
+function openPairImportModal(trigger) {
+  const kind = trigger.dataset.importKind;
+  const labels = { terms: '术语库', tm: '翻译记忆', reference: '参考译文' };
+  const accept = '.txt,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  const body = `<input id="pair-import-kind" type="hidden" value="${kind}">
+    <p class="muted">支持 TXT、DOCX、PDF。按段落交错对齐：第 1、3、5…段为原文，第 2、4、6…段为对应译文。</p>
+    <div class="form-group"><label for="pair-import-file">选择文件</label>
+      <input id="pair-import-file" class="field field-full" type="file" accept="${accept}"></div>
+    <div class="form-group"><label for="pair-import-text">或粘贴交错文本</label>
+      <textarea id="pair-import-text" class="field field-full" placeholder="原文第 1 段\n\n译文第 1 段\n\n原文第 2 段\n\n译文第 2 段"></textarea></div>`;
+  modal(`上传${labels[kind]}`, body, '<button class="button button-ghost" data-action="close-modal">取消</button>'
+    + '<button class="button button-primary" data-action="submit-pair-import">检查并导入</button>');
+}
+
+function openPostEditTask() {
+  const project = store.getProject();
+  const prompt = project.prompts.find((item) => item.id === project.activePostEditPromptId);
+  const body = `<p class="muted">这里使用独立的译后编辑 Prompt，不会改动翻译 Prompt 谱系。</p>
+    <div class="form-group"><label>当前译后编辑 Prompt</label>
+      <textarea id="post-edit-task-prompt" class="field field-full">${escapeHtml(prompt?.content || '')}</textarea></div>
+    <label class="prompt-submit-option"><input id="post-edit-save-prompt" type="checkbox">
+      <span><strong>先保存为新的译后编辑 Prompt 版本</strong><small>未勾选时直接使用当前版本执行。</small></span></label>`;
+  modal('译后编辑 Prompt', body, '<button class="button button-ghost" data-action="open-prompt-lineage" data-prompt-kind="post_edit">查看谱系</button>'
+    + '<button class="button button-primary" data-action="run-post-edit-task">执行当前句</button>');
+}
+
+function openTranslationProgress(total, title = '全文翻译') {
+  const body = `<div class="project-generation-status is-visible" id="translation-progress">
+    <span class="generation-spinner" aria-hidden="true"></span>
+    <strong data-translation-progress>准备生成 0 / ${total}</strong></div>
+    <p class="muted">每个句段完成后都会立即保存为不可变译文版本。</p>`;
+  modal(`${title}进行中`, body,
+    '<button class="button button-secondary" data-action="cancel-full-translation">取消翻译</button>');
+}
+
+function updateTranslationProgress(completed, total, label = '') {
+  const field = modalRoot.querySelector('[data-translation-progress]');
+  if (field) field.textContent = `${label || '正在生成'} ${completed} / ${total}`;
 }
 function openImportModal() {
   const accept = '.txt,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -364,18 +479,30 @@ function briefSetupEditor() {
   )).join('')}</div>`;
 }
 
+function languageSelect(id, kind) {
+  return `<label data-setup-field="${kind}-auto-language">生成语言<select id="${id}" class="field field-full">
+    <option value="zh-CN">简体中文</option><option value="en">English</option></select></label>`;
+}
+
+function generationStatus() {
+  return `<div id="project-generation-status" class="project-generation-status" hidden>
+    <span class="generation-spinner" aria-hidden="true"></span><strong data-generation-label></strong>
+    <button class="text-button" data-action="cancel-project-generation">取消生成</button></div>`;
+}
+
 function projectResourceSetupFields() {
-  return `<section class="project-setup-section"><h3>冷启动任务书</h3>
+  return `<section class="project-setup-section"><h3>任务书 · Translation Brief</h3>
     <label>创建方式<select id="import-brief-mode" class="field field-full"><option value="auto">采样前 10 段自动生成</option><option value="inherit">继承并编辑既有任务书</option><option value="manual">手动编辑</option></select></label>
+    ${languageSelect('import-brief-language', 'brief')}
     <label data-setup-field="brief-inherit" hidden>继承来源<select id="import-brief-version" class="field field-full">${inheritedBriefOptions()}</select></label>
     ${briefSetupEditor()}
   </section><section class="project-setup-section"><h3>全文 Prompt</h3>
     <label>创建方式<select id="import-prompt-mode" class="field field-full"><option value="auto">依据任务书自动生成全文 Prompt</option><option value="inherit">继承并编辑既有 Prompt</option><option value="manual">手动编辑</option></select></label>
+    ${languageSelect('import-prompt-language', 'prompt')}
     <label data-setup-field="prompt-inherit" hidden>继承来源<select id="import-prompt-version" class="field field-full">${inheritedPromptOptions()}</select></label>
     <textarea id="import-prompt-manual" data-setup-field="prompt-editor" hidden class="field field-full" placeholder="复制来源后可立即编辑，原 Prompt 不受影响"></textarea>
-  </section>`;
+  </section>${generationStatus()}`;
 }
-
 function copyInheritedBrief() {
   const versionId = modalRoot.querySelector('#import-brief-version')?.value;
   const source = inheritableProjects().find((project) => project.briefVersionId === versionId)?.brief || {};
@@ -396,7 +523,8 @@ function updateProjectSetupVisibility() {
     const mode = modalRoot.querySelector(`#import-${kind}-mode`)?.value || 'auto';
     modalRoot.querySelectorAll(`[data-setup-field^="${kind}-"]`).forEach((field) => {
       const suffix = field.dataset.setupField.replace(`${kind}-`, '');
-      field.hidden = suffix === 'inherit' ? mode !== 'inherit' : !['inherit', 'manual'].includes(mode);
+      if (suffix === 'auto-language') field.hidden = mode !== 'auto';
+      else field.hidden = suffix === 'inherit' ? mode !== 'inherit' : !['inherit', 'manual'].includes(mode);
     });
   });
 }
@@ -410,6 +538,39 @@ function copySelectedResource(target) {
   if (target.id === 'import-prompt-version' || (target.id === 'import-prompt-mode' && target.value === 'inherit')) {
     copyInheritedPrompt();
   }
+}
+function openGenerationLanguageModal(trigger) {
+  const brief = trigger.dataset.resource === 'brief';
+  const label = brief ? '任务书' : '全文 Prompt';
+  const body = `<p class="muted">选择生成内容使用的语言。原文语言和目标语言不会因此改变。</p>
+    <label>生成语言<select id="generation-language" class="field field-full">
+      <option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
+    ${generationStatus()}`;
+  const footer = `<button class="button button-ghost" data-action="close-modal">取消</button>
+    <button class="button button-primary" data-action="confirm-generate-project-resource"
+      data-resource="${brief ? 'brief' : 'prompt'}">开始生成${label}</button>`;
+  modal(`自动生成${label}`, body, footer);
+}
+function openResourceModal(trigger) {
+  const project = store.getProject();
+  const resources = {
+    terms: { title: '项目术语库', render: renderTermsPanel },
+    tm: { title: '翻译记忆', render: renderTmPanel },
+    mentor: { title: 'AI Prompt 教练', render: renderMentorPanel },
+  };
+  const resource = resources[trigger.dataset.tab];
+  if (!resource) return;
+  modal(resource.title, `<div class="resource-modal-content">${resource.render(project)}</div>`,
+    '<button class="button button-ghost" data-action="close-modal">关闭</button>');
+}
+
+function updateGenerationStatus(status) {
+  const root = modalRoot.querySelector('#project-generation-status');
+  if (!root) return;
+  root.hidden = false;
+  root.classList.toggle('is-active', Boolean(status.active));
+  root.querySelector('[data-generation-label]').textContent = status.label;
+  root.querySelector('[data-action="cancel-project-generation"]').hidden = !status.active;
 }
 function openExportModal() {
   const body = `<p class="muted">项目 JSON 保留 Prompt、译文版本和人工编辑；双语 HTML 适合课堂展示或打印。</p>
@@ -438,8 +599,20 @@ export const dialogs = {
   openVersionDrawer,
   toggleDrawerDiffs,
   openBriefModal,
+  openBriefEditModal,
+  openResourceModal,
+  openGenerationLanguageModal,
+  updateGenerationStatus,
   openPromptLineageModal,
+  switchPromptLineage,
+  toggleArchivedPrompts,
   openPromptModal,
+  openPromptArchiveConfirm,
+  openNewPromptVersion,
+  openPairImportModal,
+  openPostEditTask,
+  openTranslationProgress,
+  updateTranslationProgress,
   openImportModal,
   updateProjectSetupVisibility,
   copySelectedResource,

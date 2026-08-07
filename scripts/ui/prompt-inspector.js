@@ -5,10 +5,10 @@
  * 暴露: openPromptInspectorModal
  */
 
-import { store } from '../state/store.js?v=20260805-04';
-import { apiRequest } from '../services/auth-client.js?v=20260805-04';
-import { escapeHtml } from './render.js?v=20260805-04';
-import { showToast } from './dialogs.js?v=20260805-10';
+import { store } from '../state/store.js';
+import { apiRequest } from '../services/auth-client.js';
+import { escapeHtml } from './render.js';
+import { showToast } from './dialogs.js';
 function inspectorUrl(project, segment) {
   const query = new URLSearchParams({ projectId: project.id });
   if (project.workspaceId) query.set('workspaceId', project.workspaceId);

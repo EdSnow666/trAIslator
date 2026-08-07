@@ -2,7 +2,7 @@
  * 职责: 使用统一服务器模型执行翻译、AI 译后编辑及项目任务书/Prompt 生成
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
  * 依赖外部: Fetch API
- * 暴露: executeAiTranslation | executeProjectTextGeneration | testServerModelConnection | AiExecutionInput | ProjectTextGenerationInput
+ * 暴露: executeAiTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | testServerModelConnection | AiExecutionInput | ProjectTextGenerationInput
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -33,31 +33,44 @@ export interface ProjectTextGenerationInput {
   modelConfigId?: string;
 }
 
-interface WorkspaceRow { id: string; project_id: string; active_prompt_version_id: string | null }
+interface WorkspaceRow {
+  id: string; project_id: string; active_prompt_version_id: string | null;
+  active_post_edit_prompt_version_id: string | null;
+}
 interface ExecutionContext {
   projectId: string; sourceLanguage: string; targetLanguage: string; source: string;
-  promptVersionId: string; overarchingPrompt: string | null; customPrompt: string | null;
+  promptVersionId: string; projectBrief: unknown; overarchingPrompt: string | null; customPrompt: string | null;
   baseTranslation: string | null;
   terms: unknown[]; translationMemory: unknown[];
 }
 interface ProviderResult { content: string; usage: unknown; attempts: number; latencyMs: number }
+interface ActiveProjectRun { projectId: string; controller: AbortController }
+const activeProjectRuns = new Map<string, ActiveProjectRun>();
+const activeTranslationRuns = new Map<string, { workspaceId: string; controller: AbortController }>();
 
 class ProviderError extends Error {
   constructor(public code: string, message: string, public retryable = true) { super(message); }
 }
 
 function workspaceRow(context: AppContext, workspaceId: string): WorkspaceRow {
-  const row = context.db.prepare(`SELECT id, project_id, active_prompt_version_id
+  const row = context.db.prepare(`SELECT id, project_id, active_prompt_version_id,
+      active_post_edit_prompt_version_id
     FROM project_workspaces WHERE id = ? AND deleted_at IS NULL`).get(workspaceId) as WorkspaceRow | undefined;
   if (!row) throw new AppError(404, 'WORKSPACE_NOT_FOUND', '工作空间不存在。');
   return row;
 }
 
-function promptIdForRun(context: AppContext, user: AuthUser, row: WorkspaceRow, requested?: string): string {
-  const fallback = requested || row.active_prompt_version_id;
+function promptIdForRun(context: AppContext, user: AuthUser, row: WorkspaceRow,
+  kind: AiExecutionInput['kind'], requested?: string): string {
+  const expected = kind === 'ai_post_edit' ? 'post_edit' : 'translation';
+  const fallback = requested || (expected === 'post_edit'
+    ? row.active_post_edit_prompt_version_id : row.active_prompt_version_id);
   if (!fallback) throw new AppError(400, 'PROMPT_REQUIRED', '请先选择用于翻译的 Prompt。');
-  const visible = listVisiblePrompts(context, user, row.project_id) as Array<{ id: string }>;
-  if (!visible.some((item) => item.id === fallback)) throw new AppError(403, 'PROMPT_FORBIDDEN', '当前 Prompt 不可用。');
+  const visible = listVisiblePrompts(context, user, row.project_id) as Array<{
+    id: string; archivedAt?: string; promptKind?: string;
+  }>;
+  if (!visible.some((item) => item.id === fallback && item.promptKind === expected
+    && !item.archivedAt)) throw new AppError(403, 'PROMPT_FORBIDDEN', '当前 Prompt 不可用。');
   return fallback;
 }
 
@@ -80,9 +93,16 @@ function resources(context: AppContext, projectId: string): { terms: unknown[]; 
   return { terms, translationMemory };
 }
 
+function projectBrief(context: AppContext, projectId: string): unknown {
+  const brief = context.db.prepare(`SELECT pbv.content_json AS content FROM project_brief_states pbs
+    JOIN project_brief_versions pbv ON pbv.id = pbs.current_version_id WHERE pbs.project_id = ?`)
+    .get(projectId) as { content: string } | undefined;
+  try { return brief ? JSON.parse(brief.content) : null; } catch { return null; }
+}
+
 function buildExecutionContext(context: AppContext, user: AuthUser, row: WorkspaceRow,
   input: AiExecutionInput): ExecutionContext {
-  const promptVersionId = promptIdForRun(context, user, row, input.promptVersionId);
+  const promptVersionId = promptIdForRun(context, user, row, input.kind, input.promptVersionId);
   const record = context.db.prepare(`SELECT p.source_language AS sourceLanguage,
       p.target_language AS targetLanguage, s.source_text AS source, pv.content AS selectedPrompt
     FROM segments s JOIN documents d ON d.id = s.document_id JOIN projects p ON p.id = d.project_id
@@ -96,14 +116,14 @@ function buildExecutionContext(context: AppContext, user: AuthUser, row: Workspa
     .get(row.project_id) as { id: string; content: string } | undefined;
   return { sourceLanguage: record.sourceLanguage, targetLanguage: record.targetLanguage,
     source: record.source, projectId: row.project_id, promptVersionId,
-    overarchingPrompt: published?.content || null,
+    projectBrief: projectBrief(context, row.project_id), overarchingPrompt: published?.content || null,
     customPrompt: published?.id === promptVersionId ? null : record.selectedPrompt,
     baseTranslation: baseTranslation(context, row, input.baseVersionId), ...resources(context, row.project_id) };
 }
 
 function requestBody(model: ResolvedServerModel, input: AiExecutionInput, data: ExecutionContext): unknown {
   const payload = { sourceLanguage: data.sourceLanguage, targetLanguage: data.targetLanguage,
-    source: data.source, currentTranslation: data.baseTranslation,
+    source: data.source, currentTranslation: data.baseTranslation, projectBrief: data.projectBrief,
     overarchingPrompt: data.overarchingPrompt, customPrompt: data.customPrompt,
     terminology: data.terms, translationMemory: data.translationMemory };
   return { model: model.model, temperature: 0.2, messages: translationMessages(input.kind, payload) };
@@ -113,9 +133,12 @@ function endpoint(baseUrl: string): string {
   return baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
 }
 
-async function callOnce(model: ResolvedServerModel, body: unknown): Promise<{ content: string; usage: unknown }> {
+async function callOnce(model: ResolvedServerModel, body: unknown, external?: AbortSignal): Promise<{ content: string; usage: unknown }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), model.requestTimeoutMs);
+  const cancel = () => controller.abort();
+  if (external?.aborted) controller.abort();
+  else external?.addEventListener('abort', cancel, { once: true });
   try {
     const response = await fetch(endpoint(model.baseUrl), { method: 'POST', signal: controller.signal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${model.apiKey}` },
@@ -132,19 +155,20 @@ async function callOnce(model: ResolvedServerModel, body: unknown): Promise<{ co
     return { content, usage: payload.usage || {} };
   } catch (error) {
     if (error instanceof ProviderError) throw error;
+    if (external?.aborted) throw new ProviderError('AI_REQUEST_CANCELLED', '生成任务已取消。', false);
     const code = error instanceof Error && error.name === 'AbortError' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_NETWORK_ERROR';
     throw new ProviderError(code, code === 'PROVIDER_TIMEOUT' ? '模型请求超时。' : '无法连接模型服务。');
-  } finally { clearTimeout(timeout); }
+  } finally { clearTimeout(timeout); external?.removeEventListener('abort', cancel); }
 }
 
-async function callWithRetries(model: ResolvedServerModel, body: unknown): Promise<ProviderResult> {
+async function callWithRetries(model: ResolvedServerModel, body: unknown, signal?: AbortSignal): Promise<ProviderResult> {
   const started = Date.now();
   let attempts = 0;
   let lastError = new ProviderError('PROVIDER_UNKNOWN', '模型调用失败。');
   for (let attempt = 1; attempt <= model.maxRetries + 1; attempt += 1) {
     attempts = attempt;
     try {
-      const result = await callOnce(model, body);
+      const result = await callOnce(model, body, signal);
       return { ...result, attempts, latencyMs: Date.now() - started };
     } catch (error) {
       lastError = error as ProviderError;
@@ -164,7 +188,7 @@ function createPendingRun(context: AppContext, user: AuthUser, row: WorkspaceRow
   input: AiExecutionInput, data: ExecutionContext, model: ResolvedServerModel): string {
   const id = newId();
   const manifest = { source: data.source, baseTranslationId: input.baseVersionId || null,
-    overarchingPrompt: data.overarchingPrompt, customPrompt: data.customPrompt,
+    projectBrief: data.projectBrief, overarchingPrompt: data.overarchingPrompt, customPrompt: data.customPrompt,
     terms: data.terms, translationMemory: data.translationMemory };
   context.db.prepare(`INSERT INTO ai_runs (id, operation_type, actor_user_id, project_id, workspace_id,
     segment_id, prompt_version_id, provider, model, request_id, input_hash, context_manifest_json,
@@ -247,14 +271,25 @@ export async function executeProjectTextGeneration(context: AppContext, user: Au
   if (prior) throw new AppError(409, 'AI_REQUEST_EXISTS', '该 AI 请求已存在，请使用新的 requestId 重试。');
   const model = resolveServerModel(context, input.modelConfigId);
   const runId = createProjectRun(context, user, projectId, input, model);
+  const controller = new AbortController();
+  activeProjectRuns.set(input.requestId, { projectId, controller });
   try {
-    const result = await callWithRetries(model, projectRequestBody(model, input));
+    const result = await callWithRetries(model, projectRequestBody(model, input), controller.signal);
     finishProjectRun(context, runId, result);
     return { runId, content: result.content };
   } catch (error) {
     failProjectRun(context, user, projectId, input, runId, error as ProviderError);
     throw new AppError(502, (error as ProviderError).code || 'AI_PROVIDER_ERROR', (error as Error).message);
-  }
+  } finally { activeProjectRuns.delete(input.requestId); }
+}
+
+export function cancelProjectTextGeneration(context: AppContext, user: AuthUser,
+  projectId: string, requestId: string): boolean {
+  ensureProjectManage(context, user, projectId);
+  const active = activeProjectRuns.get(requestId);
+  if (!active || active.projectId !== projectId) return false;
+  active.controller.abort();
+  return true;
 }
 
 export async function executeAiTranslation(context: AppContext, user: AuthUser, workspaceId: string,
@@ -270,8 +305,10 @@ export async function executeAiTranslation(context: AppContext, user: AuthUser, 
   const data = buildExecutionContext(context, user, row, input);
   const model = resolveServerModel(context, input.modelConfigId);
   const runId = createPendingRun(context, user, row, input, data, model);
+  const controller = new AbortController();
+  activeTranslationRuns.set(input.requestId, { workspaceId, controller });
   try {
-    const result = await callWithRetries(model, requestBody(model, input, data));
+    const result = await callWithRetries(model, requestBody(model, input, data), controller.signal);
     context.db.prepare('UPDATE ai_runs SET attempt_count = ? WHERE id = ?').run(result.attempts, runId);
     const versionLinks = input.baseVersionId
       ? { parentVersionId: input.baseVersionId, baseVersionId: input.baseVersionId } : {};
@@ -282,7 +319,16 @@ export async function executeAiTranslation(context: AppContext, user: AuthUser, 
   } catch (error) {
     failRun(context, user, row, input, runId, error as ProviderError);
     throw new AppError(502, (error as ProviderError).code || 'AI_PROVIDER_ERROR', (error as Error).message);
-  }
+  } finally { activeTranslationRuns.delete(input.requestId); }
+}
+
+export function cancelAiTranslation(context: AppContext, user: AuthUser,
+  workspaceId: string, requestId: string): boolean {
+  ensureWorkspaceOwner(context, user, workspaceId);
+  const active = activeTranslationRuns.get(requestId);
+  if (!active || active.workspaceId !== workspaceId) return false;
+  active.controller.abort();
+  return true;
 }
 export async function testServerModelConnection(context: AppContext, user: AuthUser,
   modelConfigId: string): Promise<unknown> {

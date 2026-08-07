@@ -5,12 +5,13 @@
  * 暴露: openPersonalApiKeysModal
  */
 
-import { apiRequest, currentAuth } from '../services/auth-client.js?v=20260805-02';
-import { showToast } from './dialogs.js?v=20260805-07';
-import { escapeHtml } from './render.js?v=20260805-04';
+import { apiRequest, currentAuth } from '../services/auth-client.js';
+import { showToast } from './dialogs.js';
+import { escapeHtml } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 let keys = [];
+let serverModels = [];
 
 function keyRows() {
   if (!keys.length) return '<div class="empty-state">尚未保存个人 API Key。</div>';
@@ -28,12 +29,21 @@ function keyForm() {
     <button class="button button-primary" type="submit">加密保存</button></form>`;
 }
 
+function serverModelRows() {
+  if (!serverModels.length) return '<div class="empty-state">管理员或教师尚未配置统一服务器模型。</div>';
+  return serverModels.map((item) => `<div class="management-user-row"><span><strong>${escapeHtml(item.name)}</strong>
+    <small>${escapeHtml(item.provider)} · ${escapeHtml(item.model)}</small></span>
+    <em>${item.isDefault ? '默认服务器模型' : '可用服务器模型'}</em></div>`).join('');
+}
+
 function modalMarkup() {
   return `<div class="modal-backdrop" data-action="close-modal"><section class="modal management-modal"
     role="dialog" aria-modal="true" aria-label="个人 API Key" data-modal-stop>
     <header class="modal-header"><div><div class="eyebrow">PERSONAL API KEY</div><h2>个人 API Key</h2></div>
       <button class="icon-button" data-action="close-modal">×</button></header>
-    <div class="modal-body management-body"><div class="management-account-layout">${keyForm()}
+    <div class="modal-body management-body"><section class="management-panel"><div class="management-section-head"><div><h3>服务器默认模型目录</h3>
+      <p>仅显示配置元数据；API Key 由管理员或教师保管，不会向学生公开。</p></div></div>${serverModelRows()}</section>
+      <div class="management-account-layout">${keyForm()}
       <section class="management-panel"><div class="management-section-head"><div><h3>已保存 Key</h3>
         <p>只显示元数据，密钥明文永不回显。</p></div><span>${keys.length} 个</span></div>
         <div class="management-user-list">${keyRows()}</div></section></div></div>
@@ -43,8 +53,10 @@ function modalMarkup() {
 }
 
 async function loadKeys() {
-  const result = await apiRequest('/api/me/api-keys');
-  keys = result.keys || [];
+  const [keyResult, modelResult] = await Promise.all([apiRequest('/api/me/api-keys'),
+    apiRequest('/api/ai/server-model-directory')]);
+  keys = keyResult.keys || [];
+  serverModels = modelResult.models || [];
 }
 
 async function saveKey(form) {

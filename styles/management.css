@@ -407,8 +407,22 @@
 }
 .model-management-modal {
   height: min(680px, 88vh);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
+
+.model-management-layout { align-items: start; }
+.model-list-panel { align-content: start; align-self: start; }
+.model-rows {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.model-rows .management-user-row {
+  min-height: 0;
+  padding: 10px 12px;
+}
+.model-management-tabs { padding-top: 6px; }
 
 .management-model-numbers {
   display: grid;
@@ -440,6 +454,58 @@
 
 .management-create-class {
   margin-top: 12px;
+}
+.management-class-card {
+  border-radius: 16px;
+  padding: 8px;
+}
+
+.management-class-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 16px 10px;
+}
+
+.submission-list { display: grid; gap: 7px; }
+.submissions-layout { align-items: start; }
+.submissions-layout > .management-panel { align-self: start; }
+.submission-row {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 0;
+  font-size: 10px;
+}
+.submission-row summary { display: grid; gap: 3px; cursor: pointer; }
+.submission-row summary small,
+.submission-source { color: var(--ink-soft); font-size: 9px; }
+.submission-source { margin: 9px 0 4px; }
+.submission-content {
+  margin: 7px 0;
+  background: var(--surface-soft);
+  padding: 8px;
+  font-family: var(--serif);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.management-class-card.class-tone-0 { background: #eef5ff; }
+.management-class-card.class-tone-1 { background: #f4f1ff; }
+.management-class-card.class-tone-2 { background: #eef8f2; }
+.management-class-card.class-tone-3 { background: #fff6e9; }
+.management-class-card .management-panel { margin-top: 8px; }
+.management-submodal {
+  align-items: center;
+  background: rgb(15 23 42 / 38%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+  z-index: 5;
+}
+.management-submodal .management-create-class {
+  margin: 0;
+  max-width: 520px;
+  width: calc(100% - 40px);
 }
 .management-project-actions {
   display: flex;

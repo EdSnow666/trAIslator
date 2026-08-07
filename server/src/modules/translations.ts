@@ -2,7 +2,7 @@
  * 职责: 创建不可变 AI/人工译文版本、当前版本指针与 AI 修改决策
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts
  * 依赖外部: 无
- * 暴露: saveHumanPostEdit | recordGeneratedTranslation | finalizeAiTranslation | addReferenceTranslation | selectCurrentVersion | saveAiDecision | workspaceTranslations
+ * 暴露: saveHumanPostEdit | recordGeneratedTranslation | finalizeAiTranslation | addReferenceTranslation | selectCurrentVersion | confirmWorkspaceTranslations | submitWorkspaceTranslations | saveAiDecision | workspaceTranslations
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -186,6 +186,42 @@ export function selectCurrentVersion(context: AppContext, user: AuthUser, worksp
   setCurrentState(context, workspaceId, segmentId, versionId, 'translated');
   recordActivity(context, { eventType: 'translation.current_selected', actorUserId: user.id,
     projectId: row.project_id, workspaceId, segmentId, translationVersionId: versionId, requestId });
+}
+
+function currentStates(context: AppContext, workspaceId: string, segmentIds?: string[]) {
+  const rows = context.db.prepare(`SELECT segment_id AS segmentId,
+      current_translation_version_id AS versionId FROM workspace_segment_states
+    WHERE workspace_id = ? AND current_translation_version_id IS NOT NULL`).all(workspaceId) as
+    Array<{ segmentId: string; versionId: string }>;
+  return segmentIds?.length ? rows.filter((row) => segmentIds.includes(row.segmentId)) : rows;
+}
+
+export function confirmWorkspaceTranslations(context: AppContext, user: AuthUser,
+  workspaceId: string, segmentIds?: string[]): number {
+  ensureWorkspaceOwner(context, user, workspaceId);
+  const row = workspace(context, workspaceId);
+  const states = currentStates(context, workspaceId, segmentIds);
+  const update = context.db.prepare(`UPDATE workspace_segment_states SET status = 'confirmed', updated_at = ?
+    WHERE workspace_id = ? AND segment_id = ?`);
+  context.db.transaction(() => states.forEach((state) => update.run(nowIso(), workspaceId, state.segmentId))).immediate();
+  recordActivity(context, { eventType: 'translation.batch_confirmed', actorUserId: user.id,
+    projectId: row.project_id, workspaceId, metadata: { count: states.length } });
+  return states.length;
+}
+
+export function submitWorkspaceTranslations(context: AppContext, user: AuthUser,
+  workspaceId: string, segmentIds?: string[]): number {
+  ensureWorkspaceOwner(context, user, workspaceId);
+  const row = workspace(context, workspaceId);
+  const states = currentStates(context, workspaceId, segmentIds);
+  const insert = context.db.prepare(`INSERT OR IGNORE INTO translation_submissions
+    (id, project_id, workspace_id, segment_id, translation_version_id, submitted_by, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  context.db.transaction(() => states.forEach((state) => insert.run(newId(), row.project_id, workspaceId,
+    state.segmentId, state.versionId, user.id, nowIso()))).immediate();
+  recordActivity(context, { eventType: 'translation.batch_submitted', actorUserId: user.id,
+    projectId: row.project_id, workspaceId, metadata: { count: states.length } });
+  return states.length;
 }
 
 export function saveAiDecision(context: AppContext, user: AuthUser, workspaceId: string,

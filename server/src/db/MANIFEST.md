@@ -8,5 +8,8 @@
 | `instance.ts` | 维护本地或云端实例身份 |
 | `../../migrations/0004_server_model_configs.sql` | 新增统一服务器模型配置，并扩展 AI 运行的配置与重试字段 |
 | `../../migrations/0005_project_resources.sql` | 新增项目创建来源、隐藏个人工作区班级及可版本化冷启动任务书 |
+| `../../migrations/0006_prompt_archives.sql` | Prompt 安全归档与恢复记录 |
+| `../../migrations/0007_prompt_kinds.sql` | 分离翻译/译后编辑 Prompt 谱系和工作空间当前指针 |
+| `../../migrations/0008_translation_submissions.sql` | 学生译文主动提交及教师/管理员跨工作空间查看索引 |
 
 约束：生产服务启动不自动迁移；必须先由无用户 Token 的 `db:deploy` 运维命令完成备份、migration 与完整性检查。

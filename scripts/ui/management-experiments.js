@@ -5,7 +5,7 @@
  * 暴露: experimentPane | auditPane
  */
 
-import { escapeHtml } from './render.js?v=20260805-04';
+import { escapeHtml } from './render.js';
 
 const statusLabels = { draft: '草稿', active: '进行中', closed: '已结束', archived: '已归档' };
 const eventLabels = {

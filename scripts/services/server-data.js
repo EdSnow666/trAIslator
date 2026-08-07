@@ -2,11 +2,13 @@
  * 职责: 加载/创建服务器项目，并持久化任务书、Prompt、译后编辑、当前版本和 AI 修改决策
  * 依赖内部: ./auth-client.js, ./ai-post-edit.js
  * 依赖外部: Fetch API, Web Crypto API
- * 暴露: 项目创建与资源目录、项目快照、Prompt 协作、译后编辑、版本选择、AI 决策与真实 AI 执行
+ * 暴露: 项目创建与资源目录、可取消资源生成、项目快照、Prompt 协作、译后编辑、版本选择、AI 决策与真实 AI 执行
  */
 
-import { resolveAiPostEdit } from './ai-post-edit.js?v=20260804-01';
-import { apiRequest } from './auth-client.js?v=20260805-02';
+import { resolveAiPostEdit } from './ai-post-edit.js';
+import { apiRequest } from './auth-client.js';
+
+let activeProjectGeneration = null;
 
 function requestId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -34,7 +36,7 @@ async function loadSnapshot(projectInfo) {
     isLocal: projectInfo.isLocal,
     classTags: projectInfo.classTags || [],
     teachingAssignmentCount: projectInfo.teachingAssignmentCount || 0,
-    canManage: projectInfo.canManage,
+    canManage: Boolean(result.project.canManage || projectInfo.canManage),
     workspaceId,
     editable: Boolean(workspaceId),
   };
@@ -107,21 +109,65 @@ export async function saveServerBrief(projectId, content) {
   });
 }
 
-export async function generateServerBrief(projectId) {
+export async function generateServerBrief(projectId, options = {}) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/brief/generate`, {
-    method: 'POST', body: '{}',
+    method: 'POST', body: JSON.stringify(options),
   });
 }
 
-export async function generateServerPrompt(projectId) {
+export async function generateServerPrompt(projectId, options = {}) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/prompt/generate`, {
-    method: 'POST', body: '{}',
+    method: 'POST', body: JSON.stringify(options),
   });
 }
 
+function generationTasks(setup) {
+  const tasks = [];
+  if (setup.briefMode === 'auto') tasks.push({ resource: 'brief', label: '任务书',
+    language: setup.briefLanguage });
+  if (setup.promptMode === 'auto') tasks.push({ resource: 'prompt', label: '全文 Prompt',
+    language: setup.promptLanguage });
+  return tasks;
+}
+
+function generationTask(resource, language) {
+  return resource === 'brief' ? { resource, language, label: '任务书', generate: generateServerBrief }
+    : { resource: 'prompt', language, label: '全文 Prompt', generate: generateServerPrompt };
+}
+
+export async function generateServerProjectResource(projectId, resource, language, onProgress) {
+  const task = generationTask(resource, language);
+  const generationRequestId = requestId(`project-${task.resource}`);
+  activeProjectGeneration = { projectId, requestId: generationRequestId };
+  onProgress({ active: true, label: `正在生成${task.label}……` });
+  try {
+    await task.generate(projectId, { language: task.language, requestId: generationRequestId });
+  } catch (error) {
+    const label = error.code === 'AI_REQUEST_CANCELLED' ? '生成已取消，项目已保留。' : `生成未完成：${error.message}`;
+    onProgress({ active: false, label });
+    throw error;
+  } finally { activeProjectGeneration = null; }
+}
+
+export async function generateServerProjectResources(projectId, setup, onProgress) {
+  for (const task of generationTasks(setup)) {
+    await generateServerProjectResource(projectId, task.resource, task.language, onProgress);
+  }
+  onProgress({ active: false, label: '自动生成已完成。' });
+}
+
+export async function cancelServerProjectGeneration() {
+  if (!activeProjectGeneration) return false;
+  const current = activeProjectGeneration;
+  const result = await apiRequest(`/api/projects/${encodeURIComponent(current.projectId)}/generation/cancel`, {
+    method: 'POST', body: JSON.stringify({ requestId: current.requestId }),
+  });
+  return Boolean(result.cancelled);
+}
 export async function createServerPrompt(project, input) {
   const parent = input.basePrompt ? {
-    ...(input.basePrompt.isOwnedByCurrentUser ? { lineageId: input.basePrompt.lineageId } : {}),
+    ...(input.basePrompt.isOwnedByCurrentUser && input.basePrompt.projectId === project.id
+      ? { lineageId: input.basePrompt.lineageId } : {}),
     parentVersionId: input.basePrompt.id,
   } : {};
   const result = await apiRequest(`/api/projects/${encodeURIComponent(project.id)}/prompts`, {
@@ -131,6 +177,7 @@ export async function createServerPrompt(project, input) {
       title: input.title,
       note: input.note,
       content: input.content,
+      promptKind: input.promptKind || 'translation',
       sourceType: 'human',
       requestId: requestId('prompt-save'),
     }),
@@ -138,6 +185,17 @@ export async function createServerPrompt(project, input) {
   return result.id;
 }
 
+export async function archiveServerPrompt(promptId) {
+  return apiRequest(`/api/prompts/${encodeURIComponent(promptId)}/archive`, { method: 'POST' });
+}
+export async function restoreServerPrompt(promptId) {
+  return apiRequest(`/api/prompts/${encodeURIComponent(promptId)}/restore`, { method: 'POST' });
+}
+export async function importServerResourcePairs(projectId, kind, pairs) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/resources/${kind}/import`, {
+    method: 'POST', body: JSON.stringify({ pairs }),
+  });
+}
 export async function submitServerPrompt(promptId) {
   return apiRequest(`/api/prompts/${encodeURIComponent(promptId)}/submit`, { method: 'POST' });
 }
@@ -154,14 +212,18 @@ export async function publishServerPrompt(projectId, promptId) {
   });
 }
 
-export async function selectServerPrompt(project, promptId) {
-  if (!project.workspaceId) throw new Error('当前项目没有可编辑的个人工作空间。');
-  return apiRequest(`/api/workspaces/${project.workspaceId}/active-prompt`, {
-    method: 'POST',
-    body: JSON.stringify({
-      promptVersionId: promptId,
-      requestId: requestId('prompt-activate'),
-    }),
+export async function selectServerPrompt(project, promptId, promptKind = 'translation') {
+  let workspaceId = project.workspaceId;
+  if (!workspaceId && project.canManage) {
+    const result = await apiRequest(`/api/projects/${encodeURIComponent(project.id)}/workspace`, { method: 'POST' });
+    workspaceId = result.id;
+    project.workspaceId = workspaceId;
+    project.editable = true;
+  }
+  if (!workspaceId) throw new Error('当前项目没有可编辑的个人工作空间。');
+  return apiRequest(`/api/workspaces/${workspaceId}/active-prompt`, {
+    method: 'POST', body: JSON.stringify({ promptVersionId: promptId, promptKind,
+      requestId: requestId('prompt-activate') }),
   });
 }
 
@@ -211,14 +273,23 @@ async function materializeAiEdit(project, segment, translation) {
   return { parentId: result.id, baseId: base.baseId };
 }
 
-export async function runServerAiTranslation(project, segment, kind, promptId, baseVersionId) {
+export async function runServerAiTranslation(project, segment, kind, promptId, baseVersionId, options = {}) {
   if (!project.workspaceId) throw new Error('当前项目没有可运行 AI 任务的个人工作空间。');
+  const runRequestId = options.requestId || requestId(kind);
   const result = await apiRequest(`/api/workspaces/${project.workspaceId}/ai/execute`, {
     method: 'POST',
     body: JSON.stringify({ segmentId: segment.id, promptVersionId: promptId,
-      baseVersionId: baseVersionId || undefined, kind, requestId: requestId(kind) }),
+      baseVersionId: baseVersionId || undefined, kind, requestId: runRequestId }),
+    signal: options.signal,
   });
   return result.translationVersionId;
+}
+export async function cancelServerAiTranslation(project, runRequestId) {
+  if (!project.workspaceId) return false;
+  const result = await apiRequest(`/api/workspaces/${project.workspaceId}/ai/cancel`, {
+    method: 'POST', body: JSON.stringify({ requestId: runRequestId }),
+  });
+  return Boolean(result.cancelled);
 }
 export async function saveServerPostEdit(project, segment, translation, content) {
   if (!project.workspaceId) throw new Error('当前项目为只读模板，请先发布并分配项目。');
@@ -245,6 +316,13 @@ export async function selectServerVersion(project, segmentId, translationId) {
       translationVersionId: translationId,
       requestId: requestId('select-version'),
     }),
+  });
+}
+
+export async function updateServerTranslationStates(project, action, segmentIds) {
+  if (!project.workspaceId) throw new Error('当前项目没有可操作的个人工作空间。');
+  return apiRequest(`/api/workspaces/${project.workspaceId}/translations/${action}`, {
+    method: 'POST', body: JSON.stringify({ segmentIds }),
   });
 }
 

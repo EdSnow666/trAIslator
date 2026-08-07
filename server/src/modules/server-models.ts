@@ -2,7 +2,7 @@
  * 职责: 加密保存统一服务器模型配置，并为 AI 调用解析默认配置
  * 依赖内部: ../auth/types.ts, ../config.ts, ../context.ts, ../errors.ts, ../shared.ts, ./activity.ts
  * 依赖外部: node:crypto, node:fs, node:path
- * 暴露: listServerModels | saveServerModel | disableServerModel | resolveServerModel | serverModelCapability
+ * 暴露: listServerModels | listServerModelDirectory | saveServerModel | disableServerModel | resolveServerModel | serverModelCapability
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
@@ -130,6 +130,12 @@ export function listServerModels(context: AppContext): unknown[] {
       u.display_name AS updatedBy, 1 AS hasApiKey
     FROM server_model_configs smc LEFT JOIN users u ON u.id = smc.updated_by
     ORDER BY smc.is_default DESC, smc.updated_at DESC`).all();
+}
+
+export function listServerModelDirectory(context: AppContext): unknown[] {
+  return context.db.prepare(`SELECT id, name, provider, model, is_default AS isDefault,
+      updated_at AS updatedAt FROM server_model_configs
+    WHERE status = 'active' ORDER BY is_default DESC, updated_at DESC`).all();
 }
 
 export function saveServerModel(context: AppContext, user: AuthUser, input: ServerModelInput): string {
