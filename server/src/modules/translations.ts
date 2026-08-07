@@ -2,7 +2,7 @@
  * 职责: 创建不可变译文、稳定 Diff 基线、当前指针及原子确认/提交与 AI 决策事件
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./translation-diffs.ts
  * 依赖外部: 无
- * 暴露: saveHumanPostEdit | recordGeneratedTranslation | finalizeAiTranslation | addReferenceTranslation | selectCurrentVersion | transitionWorkspaceTranslations | saveAiDecision | workspaceTranslations
+ * 暴露: saveHumanPostEdit | recordGeneratedTranslation | finalizeAiTranslation | finalizeFullAiTranslations | addReferenceTranslation | selectCurrentVersion | transitionWorkspaceTranslations | saveAiDecision | workspaceTranslations
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -38,6 +38,17 @@ export interface GeneratedTranslationInput extends VersionInput {
 
 export interface ExecutedTranslationInput extends VersionInput {
   kind: 'ai_translation' | 'ai_post_edit';
+}
+export interface FullTranslationItem { segmentId: string; content: string }
+
+function insertValidFullBatch(context: AppContext, row: WorkspaceRow, runId: string,
+  items: FullTranslationItem[], rawOutput: string): void {
+  context.db.prepare(`INSERT INTO full_translation_batches
+    (id, ai_run_id, project_id, workspace_id, expected_segment_count, response_segment_count,
+      validation_status, segment_ids_json, response_hash, origin_instance_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'valid', ?, ?, ?, ?)`)
+    .run(newId(), runId, row.project_id, row.id, items.length, items.length,
+      jsonText(items.map((item) => item.segmentId)), sha256(rawOutput), context.instanceId, nowIso());
 }
 
 function workspace(context: AppContext, workspaceId: string): WorkspaceRow {
@@ -232,6 +243,30 @@ export function finalizeAiTranslation(context: AppContext, user: AuthUser, works
       translationVersionId: versionId, promptVersionId: input.promptVersionId || null, metadata: { aiRunId: runId } });
   }).immediate();
   return versionId;
+}
+
+export function finalizeFullAiTranslations(context: AppContext, user: AuthUser, workspaceId: string,
+  promptVersionId: string, runId: string, items: FullTranslationItem[], usage: unknown,
+  latencyMs: number, requestId: string, rawOutput: string): string[] {
+  ensureWorkspaceOwner(context, user, workspaceId);
+  const row = workspace(context, workspaceId);
+  const versionIds: string[] = [];
+  context.db.transaction(() => {
+    context.db.prepare(`UPDATE ai_runs SET status = 'succeeded', output_text = ?, token_usage_json = ?, latency_ms = ?,
+      completed_at = ? WHERE id = ?`).run(rawOutput, jsonText(usage), latencyMs, nowIso(), runId);
+    insertValidFullBatch(context, row, runId, items, rawOutput);
+    items.forEach((item) => {
+      ensureSegmentProject(context, item.segmentId, row.project_id);
+      const versionId = insertVersion(context, user.id, row.project_id, workspaceId,
+        { ...item, promptVersionId }, 'ai_translation', runId, 'workspace');
+      setCurrentState(context, workspaceId, item.segmentId, versionId, 'translated');
+      versionIds.push(versionId);
+    });
+    recordActivity(context, { eventType: 'translation.full_generated', actorUserId: user.id,
+      projectId: row.project_id, workspaceId, requestId,
+      metadata: { aiRunId: runId, versionIds, segmentCount: versionIds.length } });
+  }).immediate();
+  return versionIds;
 }
 export function addReferenceTranslation(context: AppContext, user: AuthUser, projectId: string, input: VersionInput): string {
   ensureProjectManage(context, user, projectId);

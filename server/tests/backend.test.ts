@@ -6,7 +6,6 @@
  */
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -17,43 +16,12 @@ import { openDatabase } from '../src/db/database.js';
 import { initializeAdmin } from '../src/ops/admin.js';
 import { runMigrationDeployment } from '../src/ops/deploy.js';
 import { seedDemoTemplates } from '../src/seed/demo-templates.js';
+import { exerciseFullTranslation, exerciseInvalidFullTranslation, exerciseRealAiExecution,
+  startMockModel } from './ai-execution-test-helpers.js';
 interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
 interface ProjectScenario { projectId: string; workspaceId: string; segmentId: string; promptId: string }
-function respondMockModel(request: IncomingMessage, response: ServerResponse): void {
-  const chunks: Buffer[] = [];
-  request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-  request.on('end', () => {
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
-      model?: string; messages?: Array<{ content?: string }>;
-    };
-    if (body.model === 'no-channel-model') {
-      response.writeHead(503, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { code: 'model_not_found',
-        message: 'No available channel for model no-channel-model under group user.' } }));
-      return;
-    }
-    const instruction = body.messages?.[0]?.content || '';
-    const postEdit = instruction.includes('post-editor');
-    const brief = instruction.includes('cold-start translation brief');
-    const fullPrompt = instruction.includes('complete reusable translation prompt');
-    const content = brief ? JSON.stringify({ genre: 'academic article', skopos: 'teaching',
-      audience: 'students', register: 'formal', strategy: 'preserve explicit sentence structure' })
-      : fullPrompt ? 'Translate the full document in a formal academic register.'
-        : postEdit ? 'Structurally revised target.' : 'Server generated target.';
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ choices: [{ message: { content } }],
-      usage: { prompt_tokens: 12, completion_tokens: 4 } }));
-  });
-}
-async function startMockModel(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
-  const server = createServer(respondMockModel);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Mock model failed to start.');
-  return { baseUrl: `http://127.0.0.1:${address.port}/v1`,
-    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) };
-}
+
 async function login(app: FastifyInstance, username: string, password: string): Promise<Session> {
   const response = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username, password } });
   assert.equal(response.statusCode, 200, response.body);
@@ -264,6 +232,15 @@ function verifyDatabaseState(databasePath: string, projectId: string): void {
   const atomicVersions = db.prepare(`SELECT COUNT(*) AS count FROM translation_versions
     WHERE project_id = ? AND content = 'Atomic human revision.'`).get(projectId) as { count: number };
   assert.equal(atomicVersions.count, 1);
+  const fullBatch = db.prepare(`SELECT expected_segment_count AS expectedCount,
+      response_segment_count AS responseCount, validation_status AS status
+    FROM full_translation_batches WHERE project_id = ? AND validation_status = 'valid'`).get(projectId) as
+    { expectedCount: number; responseCount: number; status: string };
+  assert.equal(fullBatch.status, 'valid');
+  assert.equal(fullBatch.responseCount, fullBatch.expectedCount);
+  const invalidBatch = db.prepare(`SELECT COUNT(*) AS count FROM full_translation_batches
+    WHERE project_id = ? AND validation_status = 'invalid'`).get(projectId) as { count: number };
+  assert.equal(invalidBatch.count, 1);
   const key = db.prepare('SELECT ciphertext FROM user_api_keys LIMIT 1')
     .get() as { ciphertext: string };
   assert.notEqual(key.ciphertext, 'secret-test-value');
@@ -492,32 +469,6 @@ async function exerciseProviderErrorDetail(app: FastifyInstance, sessions: TestS
   assert.equal(tested.statusCode, 502, tested.body);
   assert.equal(tested.json().code, 'PROVIDER_HTTP_503');
   assert.match(tested.json().message, /No available channel for model no-channel-model/);
-}
-async function exerciseRealAiExecution(app: FastifyInstance, sessions: TestSessions,
-  scenario: ProjectScenario): Promise<void> {
-  const translation = await app.inject({ method: 'POST',
-    url: `/api/workspaces/${scenario.workspaceId}/ai/execute`, headers: { cookie: sessions.student.cookie },
-    payload: { segmentId: scenario.segmentId, promptVersionId: scenario.promptId,
-      kind: 'ai_translation', requestId: 'real-translation-001' } });
-  assert.equal(translation.statusCode, 201, translation.body);
-  const repeatedTranslation = await app.inject({ method: 'POST',
-    url: `/api/workspaces/${scenario.workspaceId}/ai/execute`, headers: { cookie: sessions.student.cookie },
-    payload: { segmentId: scenario.segmentId, promptVersionId: scenario.promptId,
-      kind: 'ai_translation', requestId: 'real-translation-001' } });
-  assert.equal(repeatedTranslation.json().translationVersionId, translation.json().translationVersionId);
-  const postEdit = await app.inject({ method: 'POST',
-    url: `/api/workspaces/${scenario.workspaceId}/ai/execute`, headers: { cookie: sessions.student.cookie },
-    payload: { segmentId: scenario.segmentId,
-      baseVersionId: translation.json().translationVersionId,
-      kind: 'ai_post_edit', requestId: 'real-post-edit-001' } });
-  assert.equal(postEdit.statusCode, 201, postEdit.body);
-  const snapshot = await app.inject({ method: 'GET',
-    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
-    headers: { cookie: sessions.student.cookie } });
-  const segment = snapshot.json().project.segments.find((item: { id: string }) => item.id === scenario.segmentId);
-  assert.equal(segment.currentTranslationId, postEdit.json().translationVersionId);
-  assert.equal(segment.translations.find((item: { id: string }) => item.id === postEdit.json().translationVersionId).aiText,
-    'Structurally revised target.');
 }
 async function exerciseNoModelProjectCreation(app: FastifyInstance, sessions: TestSessions): Promise<string> {
   const catalog = await app.inject({ method: 'GET', url: '/api/project-resources/catalog',
@@ -820,6 +771,8 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     const pendingProjectId = await exerciseNoModelProjectCreation(app, sessions);
     await exerciseEditedResourceInheritance(app, sessions);
     const serverModelId = await exerciseServerModelConfig(app, sessions, mockModel.baseUrl);
+    await exerciseFullTranslation(app, sessions, scenario);
+    await exerciseInvalidFullTranslation(app, sessions, scenario, mockModel.baseUrl);
     await exerciseProviderErrorDetail(app, sessions, mockModel.baseUrl);
     await exerciseDeferredGeneration(app, sessions, pendingProjectId);
     await exerciseUnavailableModelFallback(app, sessions, serverModelId, mockModel.baseUrl);

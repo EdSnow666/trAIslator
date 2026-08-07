@@ -284,6 +284,14 @@ export async function runServerAiTranslation(project, segment, kind, promptId, b
   });
   return result.translationVersionId;
 }
+export async function runServerFullTranslation(project, promptId, options = {}) {
+  if (!project.workspaceId) throw new Error('当前项目没有可运行 AI 任务的个人工作空间。');
+  const runRequestId = options.requestId || requestId('full-translation');
+  return apiRequest(`/api/workspaces/${project.workspaceId}/ai/execute-full`, {
+    method: 'POST', body: JSON.stringify({ promptVersionId: promptId,
+      requestId: runRequestId }), signal: options.signal,
+  });
+}
 export async function cancelServerAiTranslation(project, runRequestId) {
   if (!project.workspaceId) return false;
   const result = await apiRequest(`/api/workspaces/${project.workspaceId}/ai/cancel`, {

@@ -12,5 +12,6 @@
 | `../../migrations/0007_prompt_kinds.sql` | 分离翻译/译后编辑 Prompt 谱系和工作空间当前指针 |
 | `../../migrations/0008_translation_submissions.sql` | 学生译文主动提交及教师/管理员跨工作空间查看索引 |
 | `../../migrations/0009_translation_traceability.sql` | 译文根版本/机器比较基线、持久化 Diff、精确工作流事件与 AI 决策历史 |
+| `../../migrations/0010_full_translation_batches.sql` | 全文 JSON 翻译批次的段落计数、ID 校验结果与响应哈希审计 |
 
 约束：生产服务启动不自动迁移；必须先由无用户 Token 的 `db:deploy` 运维命令完成备份、migration 与完整性检查。

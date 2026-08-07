@@ -8,8 +8,8 @@
 import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
-import { cancelAiTranslation, executeAiTranslation, testServerModelConnection,
-  type AiExecutionInput } from './ai-execution.js';
+import { cancelAiTranslation, executeAiTranslation, executeFullTranslation, testServerModelConnection,
+  type AiExecutionInput, type FullTranslationInput } from './ai-execution.js';
 import { ensureProjectView } from './access.js';
 import { inspectPromptStructures } from './prompt-inspector.js';
 import { disableServerModel, listServerModelDirectory, listServerModels, saveServerModel, serverModelCapability,
@@ -54,6 +54,10 @@ function registerAiExecutionRoutes(app: FastifyInstance, context: AppContext): v
   app.post<{ Params: WorkspaceParams; Body: AiExecutionInput }>('/api/workspaces/:workspaceId/ai/execute',
     { preHandler: requireReadyAccount }, async (request, reply) => reply.code(201).send(
       await executeAiTranslation(context, request.authUser!, request.params.workspaceId, request.body),
+    ));
+  app.post<{ Params: WorkspaceParams; Body: FullTranslationInput }>('/api/workspaces/:workspaceId/ai/execute-full',
+    { preHandler: requireReadyAccount }, async (request, reply) => reply.code(201).send(
+      await executeFullTranslation(context, request.authUser!, request.params.workspaceId, request.body),
     ));
   app.post<{ Params: WorkspaceParams; Body: CancelBody }>('/api/workspaces/:workspaceId/ai/cancel',
     { preHandler: requireReadyAccount }, async (request) => ({

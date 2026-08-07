@@ -1,5 +1,5 @@
 /**
- * 职责: 为管理员还原各 AI 功能实际发送给模型的完整 Prompt 消息
+ * 职责: 为所有账户还原逐句、全文 JSON、译后编辑及资源生成功能的完整 Prompt 消息
  * 依赖内部: ../context.ts, ./prompt-structures.ts
  * 依赖外部: 无
  * 暴露: inspectPromptStructures
@@ -8,7 +8,7 @@
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, projectMessages,
-  promptGenerationPayload, translationMessages } from './prompt-structures.js';
+  fullTranslationMessages, promptGenerationPayload, translationMessages } from './prompt-structures.js';
 
 interface InspectInput { projectId: string; workspaceId?: string; segmentId?: string }
 interface ProjectRow { id: string; name: string; sourceLanguage: string; targetLanguage: string }
@@ -25,7 +25,7 @@ function projectRow(context: AppContext, projectId: string): ProjectRow {
 function sourceRows(context: AppContext, projectId: string): Array<{ id: string; source: string }> {
   return context.db.prepare(`SELECT s.id, s.source_text AS source FROM segments s
     JOIN documents d ON d.id = s.document_id WHERE d.project_id = ?
-    ORDER BY d.document_order, s.segment_order LIMIT 10`).all(projectId) as Array<{ id: string; source: string }>;
+    ORDER BY d.document_order, s.segment_order`).all(projectId) as Array<{ id: string; source: string }>;
 }
 
 function publishedPrompt(context: AppContext, projectId: string, kind: string): PromptRow | null {
@@ -80,6 +80,15 @@ function translationPayload(context: AppContext, project: ProjectRow, input: Ins
     ...resources(context, project.id) };
 }
 
+function fullTranslationPayload(context: AppContext, project: ProjectRow, samples: Array<{ id: string; source: string }>,
+  published: PromptRow | null, active: PromptRow | null) {
+  return { sourceLanguage: project.sourceLanguage, targetLanguage: project.targetLanguage,
+    segments: samples.map((item) => ({ segmentId: item.id, source: item.source })),
+    projectBrief: brief(context, project.id), overarchingPrompt: published?.content || null,
+    customPrompt: active && active.id !== published?.id ? active.content : null,
+    ...resources(context, project.id) };
+}
+
 export function inspectPromptStructures(context: AppContext, input: InspectInput): unknown {
   const project = projectRow(context, input.projectId);
   const samples = sourceRows(context, project.id);
@@ -93,13 +102,15 @@ export function inspectPromptStructures(context: AppContext, input: InspectInput
     translationPublished, translationActive);
   const postEditPayload = translationPayload(context, project, input, segment,
     postEditPublished, postEditActive);
-  const sampleText = samples.map((item) => item.source);
+  const sampleText = samples.slice(0, 10).map((item) => item.source);
   return { project, promptLayers: { translation: { overarching: translationPublished,
       custom: translationActive?.id === translationPublished?.id ? null : translationActive },
     postEdit: { overarching: postEditPublished,
       custom: postEditActive?.id === postEditPublished?.id ? null : postEditActive } },
     operations: [
       { id: 'translation', label: '翻译', messages: translationMessages('ai_translation', translationPayloadData) },
+      { id: 'full_translation', label: '全文翻译 JSON', messages: fullTranslationMessages(
+        fullTranslationPayload(context, project, samples, translationPublished, translationActive)) },
       { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', postEditPayload) },
       { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
       { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,

@@ -2,7 +2,7 @@
  * 职责: 使用统一服务器模型执行翻译、AI 译后编辑及项目任务书/Prompt 生成
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
  * 依赖外部: Fetch API
- * 暴露: executeAiTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | testServerModelConnection | AiExecutionInput | ProjectTextGenerationInput
+ * 暴露: executeAiTranslation | executeFullTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | testServerModelConnection | AiExecutionInput | FullTranslationInput | ProjectTextGenerationInput
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -11,16 +11,22 @@ import { AppError } from '../errors.js';
 import { jsonText, newId, nowIso, sha256 } from '../shared.js';
 import { ensureProjectManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
-import { projectMessages, translationMessages } from './prompt-structures.js';
+import { fullTranslationMessages, projectMessages, translationMessages } from './prompt-structures.js';
 import { listVisiblePrompts } from './prompts.js';
 import { resolveServerModel, type ResolvedServerModel } from './server-models.js';
-import { finalizeAiTranslation } from './translations.js';
+import { finalizeAiTranslation, finalizeFullAiTranslations,
+  type FullTranslationItem } from './translations.js';
 
 export interface AiExecutionInput {
   segmentId: string;
   promptVersionId?: string;
   baseVersionId?: string;
   kind: 'ai_translation' | 'ai_post_edit';
+  requestId: string;
+  modelConfigId?: string;
+}
+export interface FullTranslationInput {
+  promptVersionId?: string;
   requestId: string;
   modelConfigId?: string;
 }
@@ -42,6 +48,12 @@ interface ExecutionContext {
   promptVersionId: string; projectBrief: unknown; overarchingPrompt: string | null; customPrompt: string | null;
   baseTranslation: string | null;
   terms: unknown[]; translationMemory: unknown[];
+}
+interface FullSegment { id: string; source: string }
+interface FullExecutionContext {
+  projectId: string; sourceLanguage: string; targetLanguage: string; segments: FullSegment[];
+  promptVersionId: string; projectBrief: unknown; overarchingPrompt: string | null;
+  customPrompt: string | null; terms: unknown[]; translationMemory: unknown[];
 }
 interface ProviderResult { content: string; usage: unknown; attempts: number; latencyMs: number }
 interface ActiveProjectRun { projectId: string; controller: AbortController }
@@ -112,13 +124,38 @@ function buildExecutionContext(context: AppContext, user: AuthUser, row: Workspa
   if (!record) throw new AppError(400, 'SEGMENT_PROJECT_MISMATCH', '句段或 Prompt 不属于当前项目。');
   const published = context.db.prepare(`SELECT ppp.prompt_version_id AS id, pv.content
     FROM project_prompt_publications ppp JOIN prompt_versions pv ON pv.id = ppp.prompt_version_id
-    WHERE ppp.project_id = ? AND ppp.retired_at IS NULL ORDER BY ppp.published_at DESC LIMIT 1`)
-    .get(row.project_id) as { id: string; content: string } | undefined;
+    WHERE ppp.project_id = ? AND ppp.prompt_kind = ? AND ppp.retired_at IS NULL
+    ORDER BY ppp.published_at DESC LIMIT 1`)
+    .get(row.project_id, input.kind === 'ai_post_edit' ? 'post_edit' : 'translation') as
+    { id: string; content: string } | undefined;
   return { sourceLanguage: record.sourceLanguage, targetLanguage: record.targetLanguage,
     source: record.source, projectId: row.project_id, promptVersionId,
     projectBrief: projectBrief(context, row.project_id), overarchingPrompt: published?.content || null,
     customPrompt: published?.id === promptVersionId ? null : record.selectedPrompt,
     baseTranslation: baseTranslation(context, row, input.baseVersionId), ...resources(context, row.project_id) };
+}
+
+function buildFullExecutionContext(context: AppContext, user: AuthUser, row: WorkspaceRow,
+  input: FullTranslationInput): FullExecutionContext {
+  const promptVersionId = promptIdForRun(context, user, row, 'ai_translation', input.promptVersionId);
+  const project = context.db.prepare(`SELECT p.source_language AS sourceLanguage,
+      p.target_language AS targetLanguage, pv.content AS selectedPrompt
+    FROM projects p JOIN prompt_versions pv ON pv.id = ? WHERE p.id = ?`)
+    .get(promptVersionId, row.project_id) as
+    { sourceLanguage: string; targetLanguage: string; selectedPrompt: string };
+  const segments = context.db.prepare(`SELECT s.id, s.source_text AS source FROM segments s
+    JOIN documents d ON d.id = s.document_id WHERE d.project_id = ?
+    ORDER BY d.document_order, s.segment_order`).all(row.project_id) as FullSegment[];
+  if (!segments.length) throw new AppError(400, 'PROJECT_HAS_NO_SEGMENTS', '当前项目没有可翻译段落。');
+  const published = context.db.prepare(`SELECT ppp.prompt_version_id AS id, pv.content
+    FROM project_prompt_publications ppp JOIN prompt_versions pv ON pv.id = ppp.prompt_version_id
+    WHERE ppp.project_id = ? AND ppp.prompt_kind = 'translation' AND ppp.retired_at IS NULL
+    ORDER BY ppp.published_at DESC LIMIT 1`).get(row.project_id) as
+    { id: string; content: string } | undefined;
+  return { ...project, projectId: row.project_id, segments, promptVersionId,
+    projectBrief: projectBrief(context, row.project_id), overarchingPrompt: published?.content || null,
+    customPrompt: published?.id === promptVersionId ? null : project.selectedPrompt,
+    ...resources(context, row.project_id) };
 }
 
 function requestBody(model: ResolvedServerModel, input: AiExecutionInput, data: ExecutionContext): unknown {
@@ -127,6 +164,14 @@ function requestBody(model: ResolvedServerModel, input: AiExecutionInput, data: 
     overarchingPrompt: data.overarchingPrompt, customPrompt: data.customPrompt,
     terminology: data.terms, translationMemory: data.translationMemory };
   return { model: model.model, temperature: 0.2, messages: translationMessages(input.kind, payload) };
+}
+
+function fullRequestBody(model: ResolvedServerModel, data: FullExecutionContext): unknown {
+  const payload = { sourceLanguage: data.sourceLanguage, targetLanguage: data.targetLanguage,
+    segments: data.segments.map((segment) => ({ segmentId: segment.id, source: segment.source })),
+    projectBrief: data.projectBrief, overarchingPrompt: data.overarchingPrompt,
+    customPrompt: data.customPrompt, terminology: data.terms, translationMemory: data.translationMemory };
+  return { model: model.model, temperature: 0.2, messages: fullTranslationMessages(payload) };
 }
 
 function endpoint(baseUrl: string): string {
@@ -184,6 +229,15 @@ function existingRun(context: AppContext, requestId: string): { id: string; stat
     .get(requestId) as { id: string; status: string; versionId: string | null } | undefined || null;
 }
 
+function existingFullRun(context: AppContext, requestId: string) {
+  const run = context.db.prepare(`SELECT id, status FROM ai_runs WHERE request_id = ?`)
+    .get(requestId) as { id: string; status: string } | undefined;
+  if (!run) return null;
+  const versionIds = context.db.prepare(`SELECT id FROM translation_versions
+    WHERE ai_run_id = ? ORDER BY rowid`).all(run.id) as Array<{ id: string }>;
+  return { ...run, translationVersionIds: versionIds.map((item) => item.id) };
+}
+
 function createPendingRun(context: AppContext, user: AuthUser, row: WorkspaceRow,
   input: AiExecutionInput, data: ExecutionContext, model: ResolvedServerModel): string {
   const id = newId();
@@ -202,6 +256,24 @@ function createPendingRun(context: AppContext, user: AuthUser, row: WorkspaceRow
   return id;
 }
 
+function createPendingFullRun(context: AppContext, user: AuthUser, row: WorkspaceRow,
+  input: FullTranslationInput, data: FullExecutionContext, model: ResolvedServerModel): string {
+  const id = newId();
+  const manifest = { mode: 'full_document_json', segmentIds: data.segments.map((item) => item.id),
+    projectBrief: data.projectBrief, overarchingPrompt: data.overarchingPrompt,
+    customPrompt: data.customPrompt, terms: data.terms, translationMemory: data.translationMemory };
+  context.db.prepare(`INSERT INTO ai_runs (id, operation_type, actor_user_id, project_id, workspace_id,
+    prompt_version_id, provider, model, request_id, input_hash, context_manifest_json,
+    status, started_at, model_config_id, attempt_count) VALUES (?, 'translation_generate', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    'pending', ?, ?, 1)`).run(id, user.id, row.project_id, row.id, data.promptVersionId,
+      model.provider, model.model, input.requestId, sha256(JSON.stringify(manifest)),
+      jsonText(manifest), nowIso(), model.id);
+  recordActivity(context, { eventType: 'ai.request_started', actorUserId: user.id,
+    projectId: row.project_id, workspaceId: row.id, promptVersionId: data.promptVersionId,
+    requestId: input.requestId, metadata: { aiRunId: id, operationType: 'full_translation' } });
+  return id;
+}
+
 function failRun(context: AppContext, user: AuthUser, row: WorkspaceRow, input: AiExecutionInput,
   runId: string, error: ProviderError & { attempts?: number; latencyMs?: number }): void {
   context.db.prepare(`UPDATE ai_runs SET status = 'failed', error_code = ?, attempt_count = ?,
@@ -212,6 +284,38 @@ function failRun(context: AppContext, user: AuthUser, row: WorkspaceRow, input: 
     metadata: { aiRunId: runId, errorCode: error.code, attempts: error.attempts || 1 } });
 }
 
+function failFullRun(context: AppContext, user: AuthUser, row: WorkspaceRow,
+  input: FullTranslationInput, runId: string, error: ProviderError &
+  { attempts?: number; latencyMs?: number }): void {
+  context.db.prepare(`UPDATE ai_runs SET status = 'failed', error_code = ?, attempt_count = ?,
+    latency_ms = ?, completed_at = ? WHERE id = ?`)
+    .run(error.code, error.attempts || 1, error.latencyMs || null, nowIso(), runId);
+  recordActivity(context, { eventType: 'ai.request_failed', actorUserId: user.id,
+    projectId: row.project_id, workspaceId: row.id, requestId: input.requestId,
+    metadata: { aiRunId: runId, errorCode: error.code, operationType: 'full_translation' } });
+}
+
+function failFullValidation(context: AppContext, user: AuthUser, row: WorkspaceRow,
+  input: FullTranslationInput, data: FullExecutionContext, runId: string,
+  result: ProviderResult, error: ProviderError): void {
+  const ids = responseIds(result.content);
+  context.db.transaction(() => {
+    context.db.prepare(`UPDATE ai_runs SET output_text = ?, status = 'failed', error_code = ?,
+      token_usage_json = ?, attempt_count = ?, latency_ms = ?, completed_at = ? WHERE id = ?`)
+      .run(result.content, error.code, jsonText(result.usage), result.attempts,
+        result.latencyMs, nowIso(), runId);
+    context.db.prepare(`INSERT INTO full_translation_batches
+      (id, ai_run_id, project_id, workspace_id, expected_segment_count, response_segment_count,
+        validation_status, segment_ids_json, response_hash, validation_error, origin_instance_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'invalid', ?, ?, ?, ?, ?)`)
+      .run(newId(), runId, row.project_id, row.id, data.segments.length, ids.length,
+        jsonText(ids), sha256(result.content), error.message, context.instanceId, nowIso());
+    recordActivity(context, { eventType: 'ai.request_failed', actorUserId: user.id,
+      projectId: row.project_id, workspaceId: row.id, requestId: input.requestId,
+      metadata: { aiRunId: runId, errorCode: error.code, operationType: 'full_translation' } });
+  }).immediate();
+}
+
 function validateExecutionInput(input: AiExecutionInput): void {
   if (!['ai_translation', 'ai_post_edit'].includes(input.kind) || !input.segmentId?.trim()) {
     throw new AppError(400, 'AI_REQUEST_INVALID', 'AI 任务类型或句段无效。');
@@ -220,6 +324,44 @@ function validateExecutionInput(input: AiExecutionInput): void {
     throw new AppError(400, 'AI_POST_EDIT_BASE_REQUIRED', 'AI 译后编辑必须指定基础译文。');
   }
   if (!input.requestId?.trim()) throw new AppError(400, 'AI_REQUEST_ID_REQUIRED', 'AI 请求必须包含 requestId。');
+}
+
+function cleanJsonOutput(content: string): string {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced?.[1]?.trim() || trimmed;
+}
+
+function parsedTranslationRows(content: string): Array<{ segmentId?: unknown; text?: unknown }> {
+  try {
+    const parsed = JSON.parse(cleanJsonOutput(content)) as { translations?: unknown };
+    if (!Array.isArray(parsed?.translations)) throw new Error('translations must be an array');
+    return parsed.translations as Array<{ segmentId?: unknown; text?: unknown }>;
+  } catch {
+    throw new ProviderError('FULL_TRANSLATION_JSON_INVALID', '模型未返回有效的全文翻译 JSON。', false);
+  }
+}
+
+function validateFullTranslation(content: string, expected: FullSegment[]): FullTranslationItem[] {
+  const rows = parsedTranslationRows(content);
+  const expectedIds = new Set(expected.map((item) => item.id));
+  const ids = rows.map((item) => item.segmentId);
+  const validShape = rows.every((item) => typeof item.segmentId === 'string'
+    && typeof item.text === 'string' && item.text.trim().length > 0);
+  const uniqueIds = new Set(ids).size === ids.length;
+  const exactIds = rows.length === expected.length && ids.every((id) => expectedIds.has(String(id)));
+  if (!validShape || !uniqueIds || !exactIds) {
+    throw new ProviderError('FULL_TRANSLATION_ALIGNMENT_INVALID',
+      `全文翻译校验失败：预期 ${expected.length} 段，收到 ${rows.length} 段，或段落 ID 不一致。`, false);
+  }
+  const byId = new Map(rows.map((item) => [String(item.segmentId), String(item.text).trim()]));
+  return expected.map((item) => ({ segmentId: item.id, content: byId.get(item.id)! }));
+}
+
+function responseIds(content: string): string[] {
+  try {
+    return parsedTranslationRows(content).map((item) => String(item.segmentId || '')).filter(Boolean);
+  } catch { return []; }
 }
 
 function priorProjectGeneration(context: AppContext, requestId: string) {
@@ -320,6 +462,48 @@ export async function executeAiTranslation(context: AppContext, user: AuthUser, 
     failRun(context, user, row, input, runId, error as ProviderError);
     throw new AppError(502, (error as ProviderError).code || 'AI_PROVIDER_ERROR', (error as Error).message);
   } finally { activeTranslationRuns.delete(input.requestId); }
+}
+
+function priorFullResult(context: AppContext, input: FullTranslationInput) {
+  if (!input.requestId?.trim()) throw new AppError(400, 'AI_REQUEST_ID_REQUIRED', 'AI 请求必须包含 requestId。');
+  const prior = existingFullRun(context, input.requestId);
+  if (prior?.status === 'succeeded' && prior.translationVersionIds.length) return { runId: prior.id,
+    translationVersionIds: prior.translationVersionIds, status: prior.status };
+  if (prior) throw new AppError(409, 'AI_REQUEST_EXISTS', '该 AI 请求已存在，请使用新的 requestId 重试。');
+  return null;
+}
+
+async function executeNewFullTranslation(context: AppContext, user: AuthUser, workspaceId: string,
+  input: FullTranslationInput) {
+  const row = workspaceRow(context, workspaceId);
+  const data = buildFullExecutionContext(context, user, row, input);
+  const model = resolveServerModel(context, input.modelConfigId);
+  const runId = createPendingFullRun(context, user, row, input, data, model);
+  const controller = new AbortController();
+  activeTranslationRuns.set(input.requestId, { workspaceId, controller });
+  try {
+    const result = await callWithRetries(model, fullRequestBody(model, data), controller.signal);
+    let items: FullTranslationItem[];
+    try { items = validateFullTranslation(result.content, data.segments); }
+    catch (error) {
+      failFullValidation(context, user, row, input, data, runId, result, error as ProviderError);
+      throw new AppError(502, (error as ProviderError).code, (error as Error).message);
+    }
+    const ids = finalizeFullAiTranslations(context, user, workspaceId, data.promptVersionId,
+      runId, items, result.usage, result.latencyMs, input.requestId, result.content);
+    return { runId, translationVersionIds: ids, status: 'succeeded' };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    if (!(error instanceof ProviderError)) throw error;
+    failFullRun(context, user, row, input, runId, error);
+    throw new AppError(502, error.code || 'AI_PROVIDER_ERROR', error.message);
+  } finally { activeTranslationRuns.delete(input.requestId); }
+}
+
+export async function executeFullTranslation(context: AppContext, user: AuthUser, workspaceId: string,
+  input: FullTranslationInput): Promise<{ runId: string; translationVersionIds: string[]; status: string }> {
+  ensureWorkspaceOwner(context, user, workspaceId);
+  return priorFullResult(context, input) || executeNewFullTranslation(context, user, workspaceId, input);
 }
 
 export function cancelAiTranslation(context: AppContext, user: AuthUser,

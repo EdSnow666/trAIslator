@@ -1,5 +1,5 @@
 /**
- * 职责: 执行带进度提示和取消能力的全文翻译任务
+ * 职责: 执行单次全文 JSON 翻译、逐段 AI 译后编辑及确认/提交任务
  * 依赖内部: ../state/store.js, ../services/server-data.js, ./dialogs.js
  * 依赖外部: AbortController
  * 暴露: generateAllTranslations | generateAllPostEdits | confirmAllTranslations | submitAllTranslations | submitCurrentTranslation | cancelFullTranslation
@@ -7,7 +7,8 @@
 
 import { store } from '../state/store.js';
 import { cancelServerAiTranslation, refreshServerProject,
-  prepareServerPostEdit, runServerAiTranslation, updateServerTranslationStates } from '../services/server-data.js';
+  prepareServerPostEdit, runServerAiTranslation, runServerFullTranslation,
+  updateServerTranslationStates } from '../services/server-data.js';
 import { clearTranslationDraft, getTranslationDraft } from '../services/translation-drafts.js';
 import { dialogs, showToast } from './dialogs.js';
 
@@ -26,7 +27,7 @@ function operationConfig(project, kind) {
     title: '全文翻译', done: 'AI 译文', baseId: () => null };
 }
 
-async function runServerBatch(project, config) {
+async function runServerSegmentBatch(project, config) {
   const controller = new AbortController();
   activeBatch = { project, controller, requestId: null };
   dialogs.openTranslationProgress(project.segments.length, config.title);
@@ -41,12 +42,27 @@ async function runServerBatch(project, config) {
   showToast(`已生成 ${project.segments.length} 个${config.done}版本。`);
 }
 
+async function runServerFullBatch(project, config) {
+  const controller = new AbortController();
+  const requestId = `full-ai_translation-${crypto.randomUUID()}`;
+  activeBatch = { project, controller, requestId };
+  dialogs.openTranslationProgress(project.segments.length, config.title);
+  dialogs.updateTranslationProgress(0, project.segments.length, '正在进行全文翻译并校验段落 JSON');
+  const result = await runServerFullTranslation(project, config.promptId,
+    { requestId, signal: controller.signal });
+  dialogs.updateTranslationProgress(project.segments.length, project.segments.length,
+    `已校验并写入 ${result.translationVersionIds.length} 个独立版本`);
+  store.replaceServerProject(await refreshServerProject(project));
+  showToast(`已通过一次全文请求生成 ${result.translationVersionIds.length} 个${config.done}版本。`);
+}
+
 async function runBatch(kind) {
   const project = store.getProject();
   if (!store.getState().serverMode) return localGeneration(project);
   const config = operationConfig(project, kind);
   try {
-    await runServerBatch(project, config);
+    if (kind === 'ai_translation') await runServerFullBatch(project, config);
+    else await runServerSegmentBatch(project, config);
   } catch (error) {
     showToast(activeBatch?.controller.signal.aborted ? '批量任务已取消，已完成的版本仍然保留。'
       : `${config.title}中断：${error.message}`);
