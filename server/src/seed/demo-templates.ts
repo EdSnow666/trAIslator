@@ -1,6 +1,6 @@
 /**
  * 职责: 导入四个系统模板，并为既有模板回填可继承的版本化任务书
- * 依赖内部: ../config.ts, ../context.ts, ../modules/activity.ts, ../shared.ts
+ * 依赖内部: ../config.ts, ../context.ts, ../modules/activity.ts, ../modules/translation-diffs.ts, ../shared.ts
  * 依赖外部: node:path, node:url
  * 暴露: seedDemoTemplates
  */
@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { appConfig } from '../config.js';
 import type { AppContext } from '../context.js';
 import { recordActivity } from '../modules/activity.js';
+import { createVersionDiffArtifacts } from '../modules/translation-diffs.js';
 import { jsonText, nowIso, sha256 } from '../shared.js';
 
 interface DemoPrompt { id: string; version: number; title: string; note: string; content: string }
@@ -75,10 +76,10 @@ function insertTranslation(context: AppContext, project: DemoProject, segmentId:
   const baseId = `${project.id}:translation:${translation.id}`;
   const kind = translation.origin === 'manual' ? 'manual_reference' : 'ai_translation';
   context.db.prepare(`INSERT INTO translation_versions (id, project_id, segment_id, prompt_version_id,
-    version_kind, scope_type, content, content_hash, origin_instance_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'project', ?, ?, ?, ?)`)
+    version_kind, scope_type, content, content_hash, root_translation_version_id,
+    origin_instance_id, created_at) VALUES (?, ?, ?, ?, ?, 'project', ?, ?, ?, ?, ?)`)
     .run(baseId, project.id, segmentId, kind === 'manual_reference' ? null : promptIds.get(translation.promptId || '') || null,
-      kind, translation.aiText, sha256(translation.aiText), context.instanceId, nowIso());
+      kind, translation.aiText, sha256(translation.aiText), baseId, context.instanceId, nowIso());
   insertDerivedVersions(context, project.id, segmentId, baseId, translation, promptIds);
 }
 
@@ -89,20 +90,23 @@ function insertDerivedVersions(context: AppContext, projectId: string, segmentId
   let parentId = baseId;
   if (aiText) {
     parentId = `${baseId}:ai-edit`;
-    insertDerivedVersion(context, parentId, projectId, segmentId, baseId, translation, promptIds,
+    insertDerivedVersion(context, parentId, projectId, segmentId, baseId, baseId, translation, promptIds,
       'ai_post_edit', aiText);
   }
   if (postEdit && postEdit !== aiText) insertDerivedVersion(context, `${baseId}:human-edit`, projectId,
-    segmentId, parentId, translation, promptIds, 'human_post_edit', postEdit);
+    segmentId, parentId, baseId, translation, promptIds, 'human_post_edit', postEdit);
 }
 
 function insertDerivedVersion(context: AppContext, id: string, projectId: string, segmentId: string,
-  parentId: string, translation: DemoTranslation, promptIds: Map<string, string>, kind: string, content: string): void {
+  parentId: string, rootId: string, translation: DemoTranslation, promptIds: Map<string, string>, kind: string,
+  content: string): void {
   context.db.prepare(`INSERT INTO translation_versions (id, project_id, segment_id, parent_version_id,
-    base_translation_version_id, prompt_version_id, version_kind, scope_type, content, content_hash,
-    origin_instance_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?)`)
-    .run(id, projectId, segmentId, parentId, parentId, promptIds.get(translation.promptId || '') || null,
-      kind, content, sha256(content), context.instanceId, nowIso());
+    base_translation_version_id, root_translation_version_id, comparison_version_id, prompt_version_id,
+    version_kind, scope_type, content, content_hash, origin_instance_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?)`)
+    .run(id, projectId, segmentId, parentId, rootId, rootId, parentId,
+      promptIds.get(translation.promptId || '') || null, kind, content, sha256(content), context.instanceId, nowIso());
+  createVersionDiffArtifacts(context, id);
 }
 
 function insertSegments(context: AppContext, project: DemoProject, promptIds: Map<string, string>): void {

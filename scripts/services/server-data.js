@@ -293,19 +293,25 @@ export async function cancelServerAiTranslation(project, runRequestId) {
 }
 export async function saveServerPostEdit(project, segment, translation, content) {
   if (!project.workspaceId) throw new Error('当前项目为只读模板，请先发布并分配项目。');
-  const version = await materializeAiEdit(project, segment, translation);
+  const edit = await prepareServerPostEdit(project, segment, translation, content);
   const result = await apiRequest(`/api/workspaces/${project.workspaceId}/post-edits`, {
     method: 'POST',
-    body: JSON.stringify({
-      segmentId: segment.id,
-      content: content.trim(),
-      parentVersionId: version.parentId,
-      baseVersionId: version.baseId,
-      promptVersionId: translation.promptId || undefined,
-      requestId: requestId('human-post-edit'),
-    }),
+    body: JSON.stringify(edit),
   });
   return result.id;
+}
+
+export async function prepareServerPostEdit(project, segment, translation, content) {
+  const version = await materializeAiEdit(project, segment, translation);
+  return {
+    segmentId: segment.id,
+    content: content.trim(),
+    parentVersionId: version.parentId,
+    baseVersionId: version.baseId,
+    expectedVersionId: version.parentId,
+    promptVersionId: translation.promptId || undefined,
+    requestId: requestId('human-post-edit'),
+  };
 }
 export async function selectServerVersion(project, segmentId, translationId) {
   if (!project.workspaceId) throw new Error('当前项目为只读模板，不能改变当前译文。');
@@ -319,10 +325,10 @@ export async function selectServerVersion(project, segmentId, translationId) {
   });
 }
 
-export async function updateServerTranslationStates(project, action, segmentIds) {
+export async function updateServerTranslationStates(project, action, segmentIds, edits = []) {
   if (!project.workspaceId) throw new Error('当前项目没有可操作的个人工作空间。');
   return apiRequest(`/api/workspaces/${project.workspaceId}/translations/${action}`, {
-    method: 'POST', body: JSON.stringify({ segmentIds }),
+    method: 'POST', body: JSON.stringify({ segmentIds, edits, requestId: requestId(`translation-${action}`) }),
   });
 }
 

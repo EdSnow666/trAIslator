@@ -39,7 +39,7 @@ function buildConfig(): AppConfig {
     host: process.env.HOST || '127.0.0.1',
     port: numericPort(process.env.PORT),
     environment,
-    releaseVersion: process.env.APP_RELEASE || '0.2.0',
+    releaseVersion: process.env.APP_RELEASE || '0.3.0',
     secureCookie: environment === 'production',
   };
 }

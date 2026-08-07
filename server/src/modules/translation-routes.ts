@@ -1,5 +1,5 @@
 /**
- * 职责: 暴露译文生成、人工保存、参考译文、当前版本和 AI 决策 API
+ * 职责: 暴露译文生成、人工保存、原子确认/提交、参考译文、当前版本和 AI 决策 API
  * 依赖内部: ../auth/authorization.ts, ../context.ts, ./translations.ts
  * 依赖外部: fastify
  * 暴露: registerTranslationRoutes
@@ -9,19 +9,18 @@ import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { addReferenceTranslation, recordGeneratedTranslation, saveAiDecision, saveHumanPostEdit,
-  confirmWorkspaceTranslations, selectCurrentVersion, submitWorkspaceTranslations,
-  workspaceTranslations, type GeneratedTranslationInput } from './translations.js';
+  selectCurrentVersion, transitionWorkspaceTranslations, workspaceTranslations,
+  type GeneratedTranslationInput, type TranslationTransitionInput } from './translations.js';
 
 interface WorkspaceParams { workspaceId: string }
 interface ProjectParams { projectId: string }
 interface PostEditBody {
   segmentId: string; content: string; parentVersionId?: string; baseVersionId?: string;
-  promptVersionId?: string; requestId: string;
+  promptVersionId?: string; expectedVersionId?: string; requestId: string;
 }
 interface ReferenceBody { segmentId: string; content: string }
 interface CurrentBody { segmentId: string; translationVersionId: string; requestId?: string }
 interface DecisionBody { aiVersionId: string; changeId: string; decision: 'accepted' | 'rejected'; requestId?: string }
-interface BatchStateBody { segmentIds?: string[] }
 
 function registerTranslationReadRoutes(app: FastifyInstance, context: AppContext): void {
   app.get<{ Params: WorkspaceParams }>('/api/workspaces/:workspaceId/translations',
@@ -59,13 +58,17 @@ function registerTranslationStateRoutes(app: FastifyInstance, context: AppContex
         request.body.changeId, request.body.decision, request.body.requestId);
       return { ok: true };
     });
-  app.post<{ Params: WorkspaceParams; Body: BatchStateBody }>('/api/workspaces/:workspaceId/translations/confirm',
+  app.post<{ Params: WorkspaceParams; Body: Omit<TranslationTransitionInput, 'action'> }>(
+    '/api/workspaces/:workspaceId/translations/confirm',
     { preHandler: requireReadyAccount }, async (request) => ({
-      count: confirmWorkspaceTranslations(context, request.authUser!, request.params.workspaceId, request.body?.segmentIds),
+      count: transitionWorkspaceTranslations(context, request.authUser!, request.params.workspaceId,
+        { ...request.body, action: 'confirm' }),
     }));
-  app.post<{ Params: WorkspaceParams; Body: BatchStateBody }>('/api/workspaces/:workspaceId/translations/submit',
+  app.post<{ Params: WorkspaceParams; Body: Omit<TranslationTransitionInput, 'action'> }>(
+    '/api/workspaces/:workspaceId/translations/submit',
     { preHandler: requireReadyAccount }, async (request) => ({
-      count: submitWorkspaceTranslations(context, request.authUser!, request.params.workspaceId, request.body?.segmentIds),
+      count: transitionWorkspaceTranslations(context, request.authUser!, request.params.workspaceId,
+        { ...request.body, action: 'submit' }),
     }));
 }
 

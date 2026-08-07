@@ -9,7 +9,8 @@ import { store } from './state/store.js'; import './services/translation-drafts-
 import { initializeAuth } from './services/auth-client.js';
 import {
   createServerProject, createServerPrompt, loadProjectResourceCatalog, loadServerProjects, publishServerPrompt, refreshServerProject, unpublishServerPrompt,
-  runServerAiTranslation, saveServerAiDecision, saveServerPostEdit, selectServerPrompt, selectServerVersion,
+  prepareServerPostEdit, runServerAiTranslation, saveServerAiDecision, saveServerPostEdit,
+  selectServerPrompt, selectServerVersion, updateServerTranslationStates,
   saveServerBrief, generateServerProjectResource, generateServerProjectResources, cancelServerProjectGeneration,
   serverErrorProject, submitServerPrompt,
 } from './services/server-data.js';
@@ -763,12 +764,29 @@ function handleShortcut(event) {
   event.preventDefault();
   saveSegment(trigger);
 }
-function acceptCurrentAiPostEdit(event) {
+async function persistAiPostEdit(segment, text, message) {
+  const project = store.getProject();
+  const translation = store.getCurrentTranslation(segment);
+  try {
+    const edit = await prepareServerPostEdit(project, segment, translation, text);
+    await updateServerTranslationStates(project, 'confirm', [segment.id], [edit]);
+    await refreshCurrentServerProject();
+    showToast(message);
+  } catch (error) {
+    await refreshCurrentServerProject().catch(() => undefined);
+    showToast(`保存 AI 译后编辑失败：${error.message}`);
+  }
+}
+
+async function acceptCurrentAiPostEdit(event) {
   if (document.querySelector('.modal')) return;
   const segment = store.getSegment();
   const draft = segment ? store.getAiPostEditDraft(segment.id) : null;
   if (draft?.active) {
     event.preventDefault();
+    if (store.getState().serverMode) {
+      return persistAiPostEdit(segment, draft.text, 'AI 修改稿及人工调整已保存并确认。');
+    }
     store.savePostEdit(segment.id, draft.text);
     return showToast('AI 修改稿及人工调整已保存。');
   }
@@ -776,7 +794,11 @@ function acceptCurrentAiPostEdit(event) {
   const edit = store.getCurrentTranslation(segment)?.aiPostEdit;
   if (!segment || edit?.status !== 'pending') return;
   event.preventDefault();
-  applyAiPostEditResult(segment.id, true, '已通过 Ctrl+Enter 接受 AI 修改。');
+  if (!store.getState().serverMode) {
+    return applyAiPostEditResult(segment.id, true, '已通过 Ctrl+Enter 接受 AI 修改。');
+  }
+  const result = store.applyAiPostEdit(segment.id, true);
+  if (result !== null) await persistAiPostEdit(segment, result, '已通过 Ctrl+Enter 接受并保存 AI 修改。');
 }
 const auth = await initializeAuth();
 let serverLoadError = '';

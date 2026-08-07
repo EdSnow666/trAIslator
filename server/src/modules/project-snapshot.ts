@@ -1,6 +1,6 @@
 /**
  * 职责: 将规范化数据库记录组装为现有 CAT 前端可直接消费的服务器项目快照
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ./access.ts, ./project-resources.ts, ./prompts.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ./access.ts, ./project-resources.ts, ./prompts.ts, ./translation-diffs.ts
  * 依赖外部: 无
  * 暴露: buildProjectSnapshot
  */
@@ -11,6 +11,7 @@ import { AppError } from '../errors.js';
 import { ensureProjectView, ensureWorkspaceView } from './access.js';
 import { currentProjectBrief } from './project-resources.js';
 import { listVisiblePrompts } from './prompts.js';
+import { latestVersionDiff } from './translation-diffs.js';
 
 interface ProjectRow {
   id: string; name: string; direction: string; source_language: string;
@@ -21,7 +22,8 @@ interface SegmentRow {
 }
 interface VersionRow {
   id: string; segment_id: string; parent_version_id: string | null;
-  base_translation_version_id: string | null; prompt_version_id: string | null;
+  base_translation_version_id: string | null; root_translation_version_id: string | null;
+  comparison_version_id: string | null; prompt_version_id: string | null;
   version_kind: string; content: string; created_at: string; display_name: string | null;
   model: string | null; context_manifest_json: string | null; sequence: number;
   submitted_at: string | null; submitted_by_name: string | null;
@@ -97,7 +99,8 @@ function mapPrompt(prompt: PromptRow, user: AuthUser): unknown {
 
 function translationRows(context: AppContext, projectId: string, workspaceId?: string): VersionRow[] {
   return context.db.prepare(`SELECT tv.rowid AS sequence, tv.id, tv.segment_id, tv.parent_version_id,
-      tv.base_translation_version_id, tv.prompt_version_id, tv.version_kind, tv.content, tv.created_at,
+      tv.base_translation_version_id, tv.root_translation_version_id, tv.comparison_version_id,
+      tv.prompt_version_id, tv.version_kind, tv.content, tv.created_at,
       u.display_name, ar.model, ar.context_manifest_json,
       (SELECT ts.submitted_at FROM translation_submissions ts WHERE ts.translation_version_id = tv.id
         AND ts.status = 'submitted' ORDER BY ts.submitted_at DESC LIMIT 1) AS submitted_at,
@@ -163,7 +166,7 @@ function decisionRows(context: AppContext, workspaceId?: string): Map<string, Re
   return result;
 }
 
-function aiEdit(row: VersionRow, baseText: string, prompts: PromptRow[],
+function aiEdit(context: AppContext, row: VersionRow, baseText: string, prompts: PromptRow[],
   decisions: Map<string, Record<string, string>>) {
   const prompt = promptInfo(prompts, row.prompt_version_id);
   return {
@@ -177,16 +180,18 @@ function aiEdit(row: VersionRow, baseText: string, prompts: PromptRow[],
     appliedAt: row.created_at,
     decisions: decisions.get(row.id) || {},
     serverVersionId: row.id,
+    diffArtifact: latestVersionDiff(context, row.id, 'ai_to_ai_edit'),
   };
 }
 
 function versionText(row: VersionRow, rowsById: Map<string, VersionRow>): string {
+  const comparison = row.comparison_version_id ? rowsById.get(row.comparison_version_id) : undefined;
   const parent = row.parent_version_id ? rowsById.get(row.parent_version_id) : undefined;
   const base = row.base_translation_version_id ? rowsById.get(row.base_translation_version_id) : undefined;
-  return parent?.content || base?.content || row.content;
+  return comparison?.content || parent?.content || base?.content || row.content;
 }
 
-function mapVersion(row: VersionRow, rowsById: Map<string, VersionRow>, prompts: PromptRow[],
+function mapVersion(context: AppContext, row: VersionRow, rowsById: Map<string, VersionRow>, prompts: PromptRow[],
   decisions: Map<string, Record<string, string>>): unknown {
   const baseline = versionText(row, rowsById);
   const parent = row.parent_version_id ? rowsById.get(row.parent_version_id) : undefined;
@@ -206,14 +211,17 @@ function mapVersion(row: VersionRow, rowsById: Map<string, VersionRow>, prompts:
       ? JSON.stringify(parseJson(row.context_manifest_json, {})) : '服务器版本记录',
     origin: manual ? 'manual' : 'server',
     serverVersionKind: row.version_kind,
-    serverBaseVersionId: row.base_translation_version_id || row.parent_version_id || row.id,
+    serverBaseVersionId: row.root_translation_version_id || row.base_translation_version_id || row.id,
+    serverRootVersionId: row.root_translation_version_id || row.id,
+    serverComparisonVersionId: row.comparison_version_id || null,
     serverParentVersionId: row.parent_version_id,
     submittedBy: row.submitted_by_name || '',
     submittedAt: row.submitted_at || '',
   };
-  if (row.version_kind === 'ai_post_edit') mapped.aiPostEdit = aiEdit(row, baseline, prompts, decisions);
+  if (row.version_kind === 'ai_post_edit') mapped.aiPostEdit = aiEdit(context, row, baseline, prompts, decisions);
   if (row.version_kind === 'human_post_edit') {
-    mapped.serverBaselineKind = rowsById.get(row.parent_version_id || '')?.version_kind || 'ai_translation';
+    mapped.serverBaselineKind = rowsById.get(row.comparison_version_id || '')?.version_kind || 'ai_translation';
+    mapped.diffArtifact = latestVersionDiff(context, row.id, 'machine_to_human');
   }
   return mapped;
 }
@@ -225,7 +233,7 @@ function segmentStatus(kind: string | undefined): string {
   return kind ? 'translated' : 'untranslated';
 }
 
-function mapSegment(segment: SegmentRow, versions: VersionRow[], prompts: PromptRow[],
+function mapSegment(context: AppContext, segment: SegmentRow, versions: VersionRow[], prompts: PromptRow[],
   decisions: Map<string, Record<string, string>>, currentState?: StateRow): unknown {
   const rowsById = new Map(versions.map((row) => [row.id, row]));
   const currentId = currentState?.current_translation_version_id
@@ -237,7 +245,7 @@ function mapSegment(segment: SegmentRow, versions: VersionRow[], prompts: Prompt
       : currentState?.status === 'confirmed' ? 'reviewed'
         : segmentStatus(rowsById.get(currentId || '')?.version_kind),
     currentTranslationId: currentId,
-    translations: versions.map((row) => mapVersion(row, rowsById, prompts, decisions)),
+    translations: versions.map((row) => mapVersion(context, row, rowsById, prompts, decisions)),
   };
 }
 
@@ -311,7 +319,7 @@ export function buildProjectSnapshot(context: AppContext, user: AuthUser,
     activePromptId: activePromptId(context, projectId, prompts, workspaceId, 'translation'),
     activePostEditPromptId: activePromptId(context, projectId, prompts, workspaceId, 'post_edit'),
     prompts: prompts.map((prompt) => mapPrompt(prompt, user)),
-    segments: segments.map((segment) => mapSegment(segment,
+    segments: segments.map((segment) => mapSegment(context, segment,
       versions.filter((row) => row.segment_id === segment.id), prompts, decisions, states.get(segment.id))),
     ...projectResources(context, projectId),
     serverMode: true,

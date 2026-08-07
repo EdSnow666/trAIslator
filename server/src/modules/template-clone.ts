@@ -1,6 +1,6 @@
 /**
  * 职责: 将系统模板的文档、Prompt、译文与语言资源克隆到教师新项目
- * 依赖内部: ../context.ts, ../errors.ts, ../shared.ts
+ * 依赖内部: ../context.ts, ../errors.ts, ../shared.ts, ./translation-diffs.ts
  * 依赖外部: 无
  * 暴露: cloneTemplateContent
  */
@@ -8,6 +8,7 @@
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { newId, nowIso } from '../shared.js';
+import { createVersionDiffArtifacts } from './translation-diffs.js';
 
 interface IdRow { id: string }
 interface DocumentRow extends IdRow { title: string; document_order: number; metadata_json: string }
@@ -22,6 +23,7 @@ interface PromptRow extends IdRow {
 }
 interface TranslationRow extends IdRow {
   segment_id: string; parent_version_id: string | null; base_translation_version_id: string | null;
+  root_translation_version_id: string | null; comparison_version_id: string | null;
   prompt_version_id: string | null; version_kind: string; content: string; content_hash: string;
 }
 interface TermBaseRow extends IdRow { name: string }
@@ -116,7 +118,10 @@ function copyActivePrompt(context: AppContext, sourceId: string, projectId: stri
 function translationReady(row: TranslationRow, ids: Map<string, string>): boolean {
   const parentReady = !row.parent_version_id || ids.has(row.parent_version_id);
   const baseReady = !row.base_translation_version_id || ids.has(row.base_translation_version_id);
-  return parentReady && baseReady;
+  const rootReady = !row.root_translation_version_id || row.root_translation_version_id === row.id
+    || ids.has(row.root_translation_version_id);
+  const comparisonReady = !row.comparison_version_id || ids.has(row.comparison_version_id);
+  return parentReady && baseReady && rootReady && comparisonReady;
 }
 
 function insertTranslation(context: AppContext, row: TranslationRow, projectId: string, userId: string,
@@ -124,19 +129,24 @@ function insertTranslation(context: AppContext, row: TranslationRow, projectId: 
   const id = newId();
   ids.set(row.id, id);
   context.db.prepare(`INSERT INTO translation_versions (id, project_id, segment_id,
-    parent_version_id, base_translation_version_id, prompt_version_id, version_kind, scope_type,
-    content, content_hash, created_by, origin_instance_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?, ?)`)
+    parent_version_id, base_translation_version_id, root_translation_version_id, comparison_version_id,
+    prompt_version_id, version_kind, scope_type, content, content_hash, created_by, origin_instance_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?, ?)`)
     .run(id, projectId, segmentIds.get(row.segment_id), row.parent_version_id ? ids.get(row.parent_version_id) : null,
       row.base_translation_version_id ? ids.get(row.base_translation_version_id) : null,
+      row.root_translation_version_id === row.id ? id
+        : row.root_translation_version_id ? ids.get(row.root_translation_version_id) : id,
+      row.comparison_version_id ? ids.get(row.comparison_version_id) : null,
       row.prompt_version_id ? promptIds.get(row.prompt_version_id) || null : null,
       row.version_kind, row.content, row.content_hash, userId, context.instanceId, nowIso());
+  createVersionDiffArtifacts(context, id);
 }
 
 function copyTranslations(context: AppContext, sourceId: string, projectId: string, userId: string,
   segmentIds: Map<string, string>, promptIds: Map<string, string>): Map<string, string> {
   let pending = context.db.prepare(`SELECT id, segment_id, parent_version_id, base_translation_version_id,
-    prompt_version_id, version_kind, content, content_hash FROM translation_versions
+    root_translation_version_id, comparison_version_id, prompt_version_id, version_kind, content, content_hash
+    FROM translation_versions
     WHERE project_id = ? AND scope_type = 'project' ORDER BY created_at, rowid`).all(sourceId) as TranslationRow[];
   const ids = new Map<string, string>();
   while (pending.length) {

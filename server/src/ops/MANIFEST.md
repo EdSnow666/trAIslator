@@ -3,6 +3,6 @@
 | 文件 | 职责 |
 |---|---|
 | `admin.ts` | 首个管理员初始化与脱离 Web Session 的密码恢复 |
-| `deploy.ts` | 无 Token 备份、migration、完整性检查，以及失败后的自动快照恢复 |
+| `deploy.ts` | 无 Token 备份、migration、历史 Diff 回填、完整性检查，以及失败后的自动快照恢复 |
 
 云端发布只替换应用代码与静态资源。云端业务 SQLite 文件是权威数据源，禁止由本地数据库覆盖。

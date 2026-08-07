@@ -7,7 +7,7 @@
 
 import { store } from '../state/store.js';
 import { cancelServerAiTranslation, refreshServerProject,
-  runServerAiTranslation, saveServerPostEdit, updateServerTranslationStates } from '../services/server-data.js';
+  prepareServerPostEdit, runServerAiTranslation, updateServerTranslationStates } from '../services/server-data.js';
 import { clearTranslationDraft, getTranslationDraft } from '../services/translation-drafts.js';
 import { dialogs, showToast } from './dialogs.js';
 
@@ -60,26 +60,33 @@ async function updateAllStates(action, label) {
   const project = store.getProject();
   if (!store.getState().serverMode) return showToast('批量确认与提交仅在登录服务器后可用。');
   try {
-    await savePendingDrafts(project);
-    const result = await updateServerTranslationStates(project, action);
+    const pending = await collectPendingDrafts(project);
+    const result = await updateServerTranslationStates(project, action, undefined, pending.edits);
+    clearPendingDrafts(project, pending.drafts);
     store.replaceServerProject(await refreshServerProject(project));
     dialogs.closeModal();
     showToast(`已${label} ${result.count} 条当前译文。`);
   } catch (error) { showToast(`${label}失败：${error.message}`); }
 }
 
-async function savePendingDrafts(project, segmentIds) {
+async function collectPendingDrafts(project, segmentIds) {
   const selected = segmentIds?.length
     ? project.segments.filter((segment) => segmentIds.includes(segment.id)) : project.segments;
+  const edits = []; const drafts = [];
   for (const segment of selected) {
     const translation = store.getCurrentTranslation(segment);
     if (!translation) continue;
     const draft = getTranslationDraft(project.id, segment.id, translation.id);
     const saved = translation.postEditText || translation.aiText || '';
     if (draft === null || draft === saved) continue;
-    await saveServerPostEdit(project, segment, translation, draft);
-    clearTranslationDraft(project.id, segment.id, translation.id);
+    edits.push(await prepareServerPostEdit(project, segment, translation, draft));
+    drafts.push({ segmentId: segment.id, translationId: translation.id });
   }
+  return { edits, drafts };
+}
+
+function clearPendingDrafts(project, drafts) {
+  drafts.forEach((draft) => clearTranslationDraft(project.id, draft.segmentId, draft.translationId));
 }
 
 export async function confirmAllTranslations() { return updateAllStates('confirm', '确认'); }
@@ -88,8 +95,10 @@ export async function submitAllTranslations() { return updateAllStates('submit',
 export async function submitCurrentTranslation(trigger) {
   const project = store.getProject();
   try {
-    await savePendingDrafts(project, [trigger.dataset.segmentId]);
-    const result = await updateServerTranslationStates(project, 'submit', [trigger.dataset.segmentId]);
+    const segmentIds = [trigger.dataset.segmentId];
+    const pending = await collectPendingDrafts(project, segmentIds);
+    const result = await updateServerTranslationStates(project, 'submit', segmentIds, pending.edits);
+    clearPendingDrafts(project, pending.drafts);
     store.replaceServerProject(await refreshServerProject(project));
     showToast(`当前译文已提交教师（${result.count} 条）。`);
   } catch (error) { showToast(`提交失败：${error.message}`); }
@@ -101,10 +110,12 @@ async function confirmEditor(editor, event) {
   const segment = store.getSegment(editor.dataset.segmentEditor);
   const translation = store.getCurrentTranslation(segment);
   try {
-    if (store.getState().serverMode && editor.value !== (translation.postEditText || translation.aiText)) {
-      await saveServerPostEdit(project, segment, translation, editor.value);
+    if (store.getState().serverMode) {
+      const saved = translation.postEditText || translation.aiText || '';
+      const edits = editor.value === saved ? []
+        : [await prepareServerPostEdit(project, segment, translation, editor.value)];
+      await updateServerTranslationStates(project, 'confirm', [segment.id], edits);
     }
-    if (store.getState().serverMode) await updateServerTranslationStates(project, 'confirm', [segment.id]);
     clearTranslationDraft(project.id, segment.id, translation.id);
     if (store.getState().serverMode) store.replaceServerProject(await refreshServerProject(project));
     showToast('当前译文已确认。');

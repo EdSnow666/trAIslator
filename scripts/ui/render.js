@@ -336,7 +336,7 @@ function aiPostEditDiffChain(translation, direction, humanOverride, liveSegmentI
   const aiEdited = resolvedAiPostEditText(translation, direction);
   const aiDiff = renderDiffBlock(
     'AI → AI编辑 Diff', translation.aiPostEdit.baseText, aiEdited, direction,
-    'AI 编辑结果与原译一致', '', 'ai-edit',
+    'AI 编辑结果与原译一致', '', 'ai-edit', translation.aiPostEdit.diffArtifact?.parts,
   );
   const humanDiff = aiPostEditHumanDiffBlock(translation, direction, humanOverride, liveSegmentId);
   return `<div class="ai-post-edit-diff-chain">${aiDiff}${humanDiff}</div>`;
@@ -355,15 +355,21 @@ function resolvedAiPostEditText(translation, direction) {
   return resolveAiPostEdit(edit, direction, true);
 }
 
-function renderDiffBlock(label, before, after, direction, unchanged, liveSegmentId = '', theme = '') {
+function renderDiffBlock(label, before, after, direction, unchanged, liveSegmentId = '', theme = '', storedParts) {
   const attribute = liveSegmentId ? ` data-ai-human-diff="${escapeHtml(liveSegmentId)}"` : '';
   const themeClass = theme === 'ai-edit' ? ' is-ai-edit-diff' : '';
-  const content = renderDiffContent(before, after, direction, unchanged);
+  const content = storedParts ? renderStoredDiff(storedParts, unchanged)
+    : renderDiffContent(before, after, direction, unchanged);
   return `<div class="inline-diff${themeClass}"><div class="inline-diff-label">${label}</div><div class="inline-diff-content"${attribute}>${content}</div></div>`;
 }
 function renderDiffContent(before, after, direction, unchanged) {
   const language = direction === 'EN → ZH' ? 'zh' : 'en';
   const parts = buildDiff(before || '', after || '', language);
+  if (parts.every((part) => part.type === 'same')) return `<span class="diff-unchanged">${unchanged}</span>`;
+  return renderDiffParts(parts);
+}
+
+function renderStoredDiff(parts, unchanged) {
   if (parts.every((part) => part.type === 'same')) return `<span class="diff-unchanged">${unchanged}</span>`;
   return renderDiffParts(parts);
 }
@@ -398,6 +404,10 @@ function humanDiffBaseline(translation) {
 
 function renderTranslationDiff(translation, editedText, direction) {
   if (!translation) return '<span class="muted">尚无译文可比较</span>';
+  const savedText = translation.postEditText || translation.aiText || '';
+  if (translation.diffArtifact?.parts && editedText === savedText) {
+    return renderStoredDiff(translation.diffArtifact.parts, humanDiffBaseline(translation).unchanged);
+  }
   const language = direction === 'EN → ZH' ? 'zh' : 'en';
   const baseline = humanDiffBaseline(translation);
   const parts = buildDiff(baseline.text, editedText, language);

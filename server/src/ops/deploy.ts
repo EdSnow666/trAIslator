@@ -1,6 +1,6 @@
 /**
  * 职责: 在无用户 Token 的服务器运维平面完成备份、migration、校验与失败恢复
- * 依赖内部: ../config.ts, ../db/backup.ts, ../db/database.ts, ../db/migrations.ts, ../shared.ts
+ * 依赖内部: ../config.ts, ../db/backup.ts, ../db/database.ts, ../db/instance.ts, ../db/migrations.ts, ../modules/translation-diffs.ts, ../shared.ts
  * 依赖外部: 无
  * 暴露: runMigrationDeployment
  */
@@ -8,7 +8,9 @@
 import { appConfig } from '../config.js';
 import { createDatabaseBackup, restoreDatabaseBackup } from '../db/backup.js';
 import { openDatabase } from '../db/database.js';
+import { ensureAppInstance } from '../db/instance.js';
 import { migrateDatabase, migrationStatus } from '../db/migrations.js';
+import { backfillVersionDiffArtifacts } from '../modules/translation-diffs.js';
 import { newId, nowIso } from '../shared.js';
 
 function schemaLabel(states: ReturnType<typeof migrationStatus>): string {
@@ -53,6 +55,7 @@ export async function runMigrationDeployment(databasePath?: string,
     const before = schemaLabel(migrationStatus(db));
     backupPath = await createDatabaseBackup(db, backupDir);
     const after = schemaLabel(migrateDatabase(db));
+    backfillVersionDiffArtifacts({ db, instanceId: ensureAppInstance(db) });
     verifyDatabase(db);
     recordRun(db, runId, before, after, latestBackupId(db), 'succeeded');
     return { backupPath, schema: after };

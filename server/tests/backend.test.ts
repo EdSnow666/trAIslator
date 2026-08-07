@@ -183,6 +183,28 @@ async function exercisePostEdit(app: FastifyInstance, cookie: string, workspaceI
   await assertPostEditPersistence(app, cookie, workspaceId, first.json().id);
   return { aiId: generated.json().id, humanId: second.json().id };
 }
+
+async function exerciseAtomicTransition(app: FastifyInstance, cookie: string, workspaceId: string,
+  segmentId: string, parentId: string, baseId: string, promptId: string): Promise<string> {
+  const edit = { segmentId, content: 'Atomic human revision.', parentVersionId: parentId,
+    baseVersionId: baseId, promptVersionId: promptId, expectedVersionId: parentId,
+    requestId: 'atomic-human-edit-001' };
+  const payload = { segmentIds: [segmentId], edits: [edit], requestId: 'atomic-confirm-001' };
+  const first = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/translations/confirm`,
+    headers: { cookie }, payload });
+  const retry = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/translations/confirm`,
+    headers: { cookie }, payload });
+  assert.equal(first.statusCode, 200, first.body); assert.equal(retry.json().count, 1);
+  const listed = await app.inject({ method: 'GET', url: `/api/workspaces/${workspaceId}/translations`,
+    headers: { cookie } });
+  const current = listed.json().translations.find((item: { isCurrent: number; segment_id: string }) =>
+    item.isCurrent === 1 && item.segment_id === segmentId);
+  assert.equal(current.content, edit.content);
+  const submitted = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/translations/submit`,
+    headers: { cookie }, payload: { segmentIds: [segmentId], requestId: 'atomic-submit-001' } });
+  assert.equal(submitted.statusCode, 200, submitted.body);
+  return current.id;
+}
 async function assertPostEditPersistence(app: FastifyInstance, cookie: string,
   workspaceId: string, versionId: string): Promise<void> {
   const response = await app.inject({ method: 'GET', url: `/api/workspaces/${workspaceId}/translations`,
@@ -204,9 +226,13 @@ async function exerciseProjectSnapshot(app: FastifyInstance, cookie: string, pro
   const aiVersion = segment.translations.find((item: { id: string }) => item.id === ids.aiId);
   assert.equal(aiVersion.serverVersionKind, 'ai_post_edit');
   assert.equal(aiVersion.aiPostEdit.decisions['change-1'], 'accepted');
+  assert.equal(aiVersion.aiPostEdit.diffArtifact.algorithmVersion, '1.0.0');
   const humanVersion = segment.translations.find((item: { id: string }) => item.id === ids.humanId);
-  assert.equal(humanVersion.postEditText, 'Human revised sentence again.');
+  assert.equal(humanVersion.postEditText, 'Atomic human revision.');
   assert.equal(humanVersion.serverBaselineKind, 'ai_post_edit');
+  assert.equal(humanVersion.serverComparisonVersionId, ids.aiId);
+  assert.equal(humanVersion.serverRootVersionId, aiVersion.serverRootVersionId);
+  assert.equal(humanVersion.diffArtifact.algorithmVersion, '1.0.0');
 }
 async function exercisePersonalKey(app: FastifyInstance, cookie: string): Promise<void> {
   const saved = await app.inject({ method: 'POST', url: '/api/me/api-keys', headers: { cookie },
@@ -227,6 +253,17 @@ function verifyDatabaseState(databasePath: string, projectId: string): void {
   const count = db.prepare('SELECT COUNT(*) AS count FROM activity_events WHERE project_id = ?')
     .get(projectId) as { count: number };
   assert.ok(count.count >= 6);
+  const artifacts = db.prepare(`SELECT COUNT(*) AS count FROM translation_diff_artifacts
+    WHERE project_id = ? AND diff_kind IN ('ai_to_ai_edit', 'machine_to_human')`)
+    .get(projectId) as { count: number };
+  assert.ok(artifacts.count >= 2);
+  const workflow = db.prepare(`SELECT COUNT(*) AS count FROM translation_workflow_events
+    WHERE project_id = ? AND request_id IN ('atomic-confirm-001', 'atomic-submit-001')`)
+    .get(projectId) as { count: number };
+  assert.equal(workflow.count, 2);
+  const atomicVersions = db.prepare(`SELECT COUNT(*) AS count FROM translation_versions
+    WHERE project_id = ? AND content = 'Atomic human revision.'`).get(projectId) as { count: number };
+  assert.equal(atomicVersions.count, 1);
   const key = db.prepare('SELECT ciphertext FROM user_api_keys LIMIT 1')
     .get() as { ciphertext: string };
   assert.notEqual(key.ciphertext, 'secret-test-value');
@@ -682,13 +719,16 @@ async function runProjectScenario(app: FastifyInstance, sessions: TestSessions):
     setup.created.projectId, setup.workspaceId, promptId);
   const translations = await app.inject({ method: 'GET',
     url: `/api/workspaces/${setup.workspaceId}/translations`, headers: { cookie: sessions.student.cookie } });
+  const segmentId = detail.json().segments[0].id;
   const base = translations.json().translations.find(
-    (item: { version_kind: string }) => item.version_kind === 'ai_translation',
+    (item: { version_kind: string; segment_id: string }) => item.version_kind === 'ai_translation'
+      && item.segment_id === segmentId,
   );
   assert.ok(base);
-  const segmentId = detail.json().segments[0].id;
   const ids = await exercisePostEdit(app, sessions.student.cookie, setup.workspaceId,
     segmentId, base.id, promptId);
+  ids.humanId = await exerciseAtomicTransition(app, sessions.student.cookie, setup.workspaceId,
+    segmentId, ids.humanId, base.id, promptId);
   await exerciseProjectSnapshot(app, sessions.student.cookie, setup.created.projectId,
     setup.workspaceId, segmentId, ids);
   return { projectId: setup.created.projectId, workspaceId: setup.workspaceId, segmentId, promptId };
