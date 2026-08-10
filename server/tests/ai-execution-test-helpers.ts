@@ -2,7 +2,7 @@
  * 职责: 提供后端集成测试所需的模拟模型及逐句/全文 AI 执行断言
  * 依赖内部: 无
  * 依赖外部: node:assert, node:http, fastify
- * 暴露: startMockModel | exerciseRealAiExecution | exerciseFullTranslation | exerciseInvalidFullTranslation
+ * 暴露: startMockModel | exerciseRealAiExecution | exerciseFullTranslation | exerciseFullPostEdit | exerciseInvalidFullTranslation
  */
 
 import assert from 'node:assert/strict';
@@ -14,11 +14,12 @@ interface Scenario { projectId: string; workspaceId: string; segmentId: string; 
 
 function mockModelContent(messages: Array<{ content?: string }> = []): string {
   const instruction = messages[0]?.content || '';
-  if (instruction.includes('complete document as one coherent text')) {
+  if (instruction.includes('preserving paragraph alignment')) {
     const payload = JSON.parse(messages[1]?.content || '{}') as
       { segments?: Array<{ segmentId: string }> };
+    const prefix = instruction.includes('post-editor') ? 'Full post-edited' : 'Full translated';
     return JSON.stringify({ translations: (payload.segments || []).map((item, index) =>
-      ({ segmentId: item.segmentId, text: `Full translated paragraph ${index + 1}.` })) });
+      ({ segmentId: item.segmentId, text: `${prefix} paragraph ${index + 1}.` })) });
   }
   if (instruction.includes('cold-start translation brief')) return JSON.stringify({ genre: 'academic article',
     skopos: 'teaching', audience: 'students', register: 'formal', strategy: 'preserve explicit sentence structure' });
@@ -102,6 +103,42 @@ export async function exerciseFullTranslation(app: FastifyInstance, sessions: Se
   const generatedIds = new Set(first.json().translationVersionIds);
   assert.ok(refreshed.json().project.segments.every(
     (segment: { currentTranslationId: string }) => generatedIds.has(segment.currentTranslationId)));
+}
+
+async function fullPostEditBases(app: FastifyInstance, sessions: SessionSet, scenario: Scenario) {
+  const before = await app.inject({ method: 'GET',
+    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie: sessions.student.cookie } });
+  return new Map(before.json().project.segments.map(
+    (item: { id: string; currentTranslationId: string }) => [item.id, item.currentTranslationId]));
+}
+
+async function assertFullPostEditSnapshot(app: FastifyInstance, sessions: SessionSet,
+  scenario: Scenario, baseIds: Map<unknown, unknown>): Promise<void> {
+  const after = await app.inject({ method: 'GET',
+    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie: sessions.student.cookie } });
+  after.json().project.segments.forEach((segment: { id: string; currentTranslationId: string;
+    translations: Array<{ id: string; serverVersionKind: string; serverParentVersionId: string }> }) => {
+    const current = segment.translations.find((item) => item.id === segment.currentTranslationId)!;
+    assert.equal(current.serverVersionKind, 'ai_post_edit');
+    assert.equal(current.serverParentVersionId, baseIds.get(segment.id));
+  });
+}
+
+export async function exerciseFullPostEdit(app: FastifyInstance, sessions: SessionSet,
+  scenario: Scenario): Promise<void> {
+  const baseIds = await fullPostEditBases(app, sessions, scenario);
+  const payload = { kind: 'ai_post_edit', requestId: 'full-post-edit-001' };
+  const first = await app.inject({ method: 'POST',
+    url: `/api/workspaces/${scenario.workspaceId}/ai/execute-full`,
+    headers: { cookie: sessions.student.cookie }, payload });
+  const retry = await app.inject({ method: 'POST',
+    url: `/api/workspaces/${scenario.workspaceId}/ai/execute-full`,
+    headers: { cookie: sessions.student.cookie }, payload });
+  assert.equal(first.statusCode, 201, first.body);
+  assert.deepEqual(retry.json().translationVersionIds, first.json().translationVersionIds);
+  await assertFullPostEditSnapshot(app, sessions, scenario, baseIds);
 }
 
 export async function exerciseInvalidFullTranslation(app: FastifyInstance, sessions: SessionSet,

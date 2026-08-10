@@ -80,10 +80,12 @@ function translationPayload(context: AppContext, project: ProjectRow, input: Ins
     ...resources(context, project.id) };
 }
 
-function fullTranslationPayload(context: AppContext, project: ProjectRow, samples: Array<{ id: string; source: string }>,
-  published: PromptRow | null, active: PromptRow | null) {
+function fullTranslationPayload(context: AppContext, project: ProjectRow, input: InspectInput,
+  samples: Array<{ id: string; source: string }>, published: PromptRow | null,
+  active: PromptRow | null, postEdit = false) {
   return { sourceLanguage: project.sourceLanguage, targetLanguage: project.targetLanguage,
-    segments: samples.map((item) => ({ segmentId: item.id, source: item.source })),
+    segments: samples.map((item) => ({ segmentId: item.id, source: item.source,
+      ...(postEdit ? { currentTranslation: currentTranslation(context, input.workspaceId, item.id) } : {}) })),
     projectBrief: brief(context, project.id), overarchingPrompt: published?.content || null,
     customPrompt: active && active.id !== published?.id ? active.content : null,
     ...resources(context, project.id) };
@@ -110,8 +112,11 @@ export function inspectPromptStructures(context: AppContext, input: InspectInput
     operations: [
       { id: 'translation', label: '翻译', messages: translationMessages('ai_translation', translationPayloadData) },
       { id: 'full_translation', label: '全文翻译 JSON', messages: fullTranslationMessages(
-        fullTranslationPayload(context, project, samples, translationPublished, translationActive)) },
+        fullTranslationPayload(context, project, input, samples, translationPublished, translationActive)) },
       { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', postEditPayload) },
+      { id: 'full_ai_post_edit', label: '全文 AI 译后编辑 JSON', messages: fullTranslationMessages(
+        fullTranslationPayload(context, project, input, samples, postEditPublished, postEditActive, true),
+        'ai_post_edit') },
       { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
       { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,
         promptGenerationPayload(brief(context, project.id), sampleText)) },

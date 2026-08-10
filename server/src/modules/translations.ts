@@ -39,7 +39,7 @@ export interface GeneratedTranslationInput extends VersionInput {
 export interface ExecutedTranslationInput extends VersionInput {
   kind: 'ai_translation' | 'ai_post_edit';
 }
-export interface FullTranslationItem { segmentId: string; content: string }
+export interface FullTranslationItem extends VersionInput { segmentId: string; content: string }
 
 function insertValidFullBatch(context: AppContext, row: WorkspaceRow, runId: string,
   items: FullTranslationItem[], rawOutput: string): void {
@@ -247,7 +247,8 @@ export function finalizeAiTranslation(context: AppContext, user: AuthUser, works
 
 export function finalizeFullAiTranslations(context: AppContext, user: AuthUser, workspaceId: string,
   promptVersionId: string, runId: string, items: FullTranslationItem[], usage: unknown,
-  latencyMs: number, requestId: string, rawOutput: string): string[] {
+  latencyMs: number, requestId: string, rawOutput: string,
+  kind: 'ai_translation' | 'ai_post_edit' = 'ai_translation'): string[] {
   ensureWorkspaceOwner(context, user, workspaceId);
   const row = workspace(context, workspaceId);
   const versionIds: string[] = [];
@@ -257,14 +258,17 @@ export function finalizeFullAiTranslations(context: AppContext, user: AuthUser, 
     insertValidFullBatch(context, row, runId, items, rawOutput);
     items.forEach((item) => {
       ensureSegmentProject(context, item.segmentId, row.project_id);
+      ensureVersionAccessible(context, item.baseVersionId, workspaceId, row.project_id, item.segmentId);
       const versionId = insertVersion(context, user.id, row.project_id, workspaceId,
-        { ...item, promptVersionId }, 'ai_translation', runId, 'workspace');
-      setCurrentState(context, workspaceId, item.segmentId, versionId, 'translated');
+        { ...item, promptVersionId }, kind, runId, 'workspace');
+      setCurrentState(context, workspaceId, item.segmentId, versionId,
+        kind === 'ai_post_edit' ? 'ai_edited' : 'translated');
       versionIds.push(versionId);
     });
-    recordActivity(context, { eventType: 'translation.full_generated', actorUserId: user.id,
+    recordActivity(context, { eventType: kind === 'ai_post_edit'
+      ? 'translation.full_ai_post_edit_generated' : 'translation.full_generated', actorUserId: user.id,
       projectId: row.project_id, workspaceId, requestId,
-      metadata: { aiRunId: runId, versionIds, segmentCount: versionIds.length } });
+      metadata: { aiRunId: runId, versionIds, segmentCount: versionIds.length, kind } });
   }).immediate();
   return versionIds;
 }

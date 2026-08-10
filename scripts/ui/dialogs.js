@@ -1,6 +1,6 @@
 /**
  * 职责: 管理版本抽屉、Prompt 谱系、Diff、任务书查看编辑、资源浏览、可取消生成、导入与导出弹窗
- * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ./render.js
+ * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/translation-version-view.js, ./render.js
  * 依赖外部: DOM API
  * 暴露: dialogs | showToast
  */
@@ -8,6 +8,7 @@
 import { store } from '../state/store.js';
 import { buildDiff } from '../services/diff-engine.js';
 import { resolveAiPostEdit } from '../services/ai-post-edit.js';
+import { translationSequenceNumber, visibleTranslationVersions } from '../services/translation-version-view.js';
 import { escapeHtml, renderMentorPanel, renderTermsPanel, renderTmPanel } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
@@ -55,7 +56,7 @@ function openVersionDrawer(segmentId) {
 }
 
 function versionCards(project, segment) {
-  const versions = [...segment.translations].sort((left, right) => {
+  const versions = [...visibleTranslationVersions(segment)].sort((left, right) => {
     const currentOrder = Number(right.id === segment.currentTranslationId)
       - Number(left.id === segment.currentTranslationId);
     return currentOrder || segment.translations.indexOf(right) - segment.translations.indexOf(left);
@@ -75,7 +76,7 @@ function drawerDiffToggle() {
 
 function versionCard(project, segment, item) {
   const prompt = project.prompts.find((candidate) => candidate.id === item.promptId);
-  const index = segment.translations.indexOf(item) + 1;
+  const index = translationSequenceNumber(item, segment.translations);
   const isSelectedBase = segment.currentTranslationId === item.id;
   const hasAiVersion = Boolean(item.aiPostEdit) && !isStandaloneAiEdit(item);
   const isCurrent = isSelectedBase && !hasAiVersion;
@@ -98,7 +99,7 @@ function drawerBaseVersionAction(segment, item, isCurrent, hasAiVersion) {
 
 function aiPostEditVersionCard(project, segment, item) {
   const edit = item.aiPostEdit;
-  const index = segment.translations.indexOf(item) + 1;
+  const index = translationSequenceNumber(item, segment.translations);
   const isCurrent = segment.currentTranslationId === item.id;
   const aiEdited = resolvedDrawerAiEdit(project, edit);
   const humanText = item.postEditText || aiEdited;
@@ -432,7 +433,7 @@ function openTranslationProgress(total, title = '全文翻译') {
     <strong data-translation-progress>准备生成 0 / ${total}</strong></div>
     <p class="muted">每个句段完成后都会立即保存为不可变译文版本。</p>`;
   modal(`${title}进行中`, body,
-    '<button class="button button-secondary" data-action="cancel-full-translation">取消翻译</button>');
+    '<button class="button button-secondary" data-action="cancel-full-translation">取消任务</button>');
 }
 
 function updateTranslationProgress(completed, total, label = '') {

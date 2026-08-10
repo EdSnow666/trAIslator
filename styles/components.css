@@ -349,6 +349,17 @@
   color: var(--amber);
 }
 
+.status-icon.draft {
+  background: #fff0cf;
+  color: #a36b00;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.status-dot.draft {
+  background: #d99a24;
+}
+
 .status-icon.submitted {
   background: #e4edf7;
   color: #315a86;

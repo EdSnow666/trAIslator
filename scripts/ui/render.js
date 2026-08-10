@@ -1,6 +1,6 @@
 /**
  * 职责: 将当前项目状态渲染为 CAT 工作台、可复用资源面板与版本导航
- * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ../services/translation-drafts.js, ./ai-post-edit-view.js
+ * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ../services/translation-drafts.js, ../services/translation-version-view.js, ./ai-post-edit-view.js
  * 依赖外部: DOM API
  * 暴露: renderApp | escapeHtml | renderLiveDiff | renderAiHumanDiff | renderDiffParts | resizeTargetEditor
  */
@@ -10,9 +10,12 @@ import { getTranslationDraft } from '../services/translation-drafts.js';
 import { buildDiff } from '../services/diff-engine.js';
 import { resolveAiPostEdit } from '../services/ai-post-edit.js';
 import { analyzePromptCoach } from '../services/prompt-coach.js';
+import { translationRootCount, translationSequenceNumber,
+  visibleTranslationVersions } from '../services/translation-version-view.js';
 import { hasVisibleAiPostEdit, renderAiPostEditField } from './ai-post-edit-view.js';
 
 const STATUS_TEXT = {
+  draft: '待保存',
   empty: '待生成',
   translated: '待确认',
   'ai-edited': 'AI已编辑',
@@ -111,10 +114,11 @@ function matchesSegmentFilter(segment, activeFilter) {
 }
 function segmentNavItem(state, segment, project) {
   const index = project.segments.indexOf(segment) + 1;
+  const status = segmentDisplayStatus(project, segment);
   return `<button class="segment-nav-item ${state.currentSegmentId === segment.id ? 'is-active' : ''}" data-action="select-segment" data-segment-id="${segment.id}">
     <span class="segment-nav-number">${String(index).padStart(2, '0')}</span>
     <span class="segment-nav-preview">${escapeHtml(segment.source)}</span>
-    <span class="status-dot ${segment.status}"></span>
+    <span class="status-dot ${status}"></span>
   </button>`;
 }
 
@@ -174,6 +178,7 @@ export function resizeTargetEditor(editor) {
 
 function segmentRow(state, project, segment, index) {
   const current = segment.translations.find((item) => item.id === segment.currentTranslationId);
+  const status = segmentDisplayStatus(project, segment, current);
   const prompt = current ? store.getPrompt(current.promptId) : null;
   const aiVisible = hasVisibleAiPostEdit(state, current);
   const target = state.allVersionsMode
@@ -184,9 +189,21 @@ function segmentRow(state, project, segment, index) {
       <span class="segment-number">${String(index + 1).padStart(3, '0')}</span><div class="source-text">${escapeHtml(segment.source)}</div>
     </div>
     <div class="segment-cell target-cell ${state.allVersionsMode ? 'is-all-versions' : ''} ${aiVisible ? 'is-ai-post-editing' : ''}">${target}</div>
-    <div class="segment-status-cell"><span class="status-icon ${segment.status}">${statusIcon(segment.status)}</span>
-      <span class="status-label">${STATUS_TEXT[segment.status] || '待处理'}</span></div>
+    <div class="segment-status-cell"><span class="status-icon ${status}">${statusIcon(status)}</span>
+      <span class="status-label">${STATUS_TEXT[status] || '待处理'}</span></div>
   </article>`;
+}
+
+function segmentDisplayStatus(project, segment, selectedTranslation = null) {
+  const current = selectedTranslation
+    || segment.translations.find((item) => item.id === segment.currentTranslationId);
+  if (!current) return segment.status;
+  const saved = current.postEditText || current.aiText || '';
+  const cached = getTranslationDraft(project.id, segment.id, current.id);
+  const aiDraft = store.getAiPostEditDraft(segment.id);
+  const aiDirty = aiDraft?.translationId === current.id
+    && (aiDraft.active || aiDraft.text !== aiDraft.initialText);
+  return aiDirty || (cached !== null && cached !== saved) ? 'draft' : segment.status;
 }
 
 function currentTarget(state, project, segment, index, current, prompt) {
@@ -200,13 +217,16 @@ function currentTarget(state, project, segment, index, current, prompt) {
     ? renderAiPostEditField(project, segment, index, current)
     : renderTargetTextarea(segment, index, displayText, aiEditing);
   const draftText = aiEditing ? draft.text : undefined;
-  const diff = state.diffMode
+  const diff = state.diffMode || Boolean(current?.aiPostEditTrace)
     ? currentTargetDiff(current, displayText, project.direction, segment.id, aiVisible, draftText) : '';
   return `${editor}${diff}${currentTargetActions(segment, current, prompt, aiVisible, aiEditing)}`;
 }
 
 function currentTargetDiff(translation, target, direction, segmentId, aiVisible, draftText) {
   if (aiVisible) return aiPostEditHumanDiffBlock(translation, direction, draftText, segmentId);
+  if (translation?.aiPostEditTrace) {
+    return aiPostEditTraceDiffChain(translation, direction, target, segmentId);
+  }
   return translationDiff(translation, target, direction, segmentId);
 }
 function renderTargetTextarea(segment, index, target, isAiDraft = false) {
@@ -216,7 +236,7 @@ function renderTargetTextarea(segment, index, target, isAiDraft = false) {
 }
 
 function currentTargetActions(segment, translation, prompt, aiVisible, aiEditing) {
-  const index = segment.translations.indexOf(translation) + 1;
+  const index = translationSequenceNumber(translation, segment.translations);
   const label = translation?.aiPostEdit ? `T${index}-AI`
     : (isManualTranslation(translation) ? '人工参考' : promptLabel(prompt));
   const actions = aiVisible && !aiEditing ? renderAiPostEditActions(segment, translation) : `<span class="target-action-buttons">
@@ -225,7 +245,7 @@ function currentTargetActions(segment, translation, prompt, aiVisible, aiEditing
   return `<div class="target-actions"><button class="version-button" data-action="open-versions" data-segment-id="${segment.id}">${displayedVersionCount(segment)} 个版本 · ${label}</button>${actions}</div>`;
 }
 function displayedVersionCount(segment) {
-  return segment.translations.length + segment.translations.filter(hasPairedAiVersion).length;
+  return translationRootCount(segment.translations);
 }
 function renderAiPostEditActions(segment, translation) {
   return `<span class="ai-post-edit-actions">
@@ -236,7 +256,7 @@ function renderAiPostEditActions(segment, translation) {
 
 function allVersionTargets(state, project, segment, index) {
   if (!segment.translations.length) return '<div class="empty-state">尚无译文版本</div>';
-  const versions = [...segment.translations].sort((left, right) => {
+  const versions = [...visibleTranslationVersions(segment)].sort((left, right) => {
     const currentOrder = Number(right.id === segment.currentTranslationId) - Number(left.id === segment.currentTranslationId);
     return currentOrder || segment.translations.indexOf(right) - segment.translations.indexOf(left);
   });
@@ -255,12 +275,16 @@ function versionTarget(state, project, segment, index, translation) {
   const isSelectedBase = translation.id === segment.currentTranslationId;
   const hasAiVersion = hasPairedAiVersion(translation);
   const isCurrent = isSelectedBase && !hasAiVersion;
-  const translationIndex = segment.translations.indexOf(translation) + 1;
+  const translationIndex = translationSequenceNumber(translation, segment.translations);
   const prompt = store.getPrompt(translation.promptId);
-  const target = hasAiVersion ? translation.aiText : (translation.postEditText || translation.aiText || '');
+  const savedTarget = hasAiVersion ? translation.aiText : (translation.postEditText || translation.aiText || '');
+  const cached = isCurrent ? getTranslationDraft(project.id, segment.id, translation.id) : null;
+  const target = cached ?? savedTarget;
   const editor = versionEditor(segment, index, target, isCurrent);
-  const diff = state.diffMode && !hasAiVersion
-    ? translationDiff(translation, target, project.direction, isCurrent ? segment.id : '') : '';
+  const showDiff = !hasAiVersion && (state.diffMode || Boolean(translation.aiPostEditTrace));
+  const diff = showDiff && translation.aiPostEditTrace
+    ? aiPostEditTraceDiffChain(translation, project.direction, target, isCurrent ? segment.id : '')
+    : (showDiff ? translationDiff(translation, target, project.direction, isCurrent ? segment.id : '') : '');
   return `<section class="embedded-version ${isCurrent ? 'is-current' : ''}">
     <div class="embedded-version-header"><strong>译文 T${translationIndex} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${translationSubmissionLabel(translation, isCurrent)}</span></div>
     ${editor}${diff}${versionActions(segment, translation, isCurrent, hasAiVersion)}
@@ -297,7 +321,7 @@ function originalVersionActions(segment, translation) {
 
 function aiPostEditVersionTarget(project, segment, index, translation) {
   const isCurrent = translation.id === segment.currentTranslationId;
-  const translationIndex = segment.translations.indexOf(translation) + 1;
+  const translationIndex = translationSequenceNumber(translation, segment.translations);
   const draft = isCurrent ? store.getAiPostEditDraft(segment.id) : null;
   const aiEditing = Boolean(draft?.active);
   const editor = aiVersionEditor(project, segment, index, translation, isCurrent, draft);
@@ -342,6 +366,11 @@ function aiPostEditDiffChain(translation, direction, humanOverride, liveSegmentI
   return `<div class="ai-post-edit-diff-chain">${aiDiff}${humanDiff}</div>`;
 }
 
+function aiPostEditTraceDiffChain(translation, direction, humanText, liveSegmentId) {
+  const traced = { ...translation, aiPostEdit: translation.aiPostEditTrace };
+  return aiPostEditDiffChain(traced, direction, humanText, liveSegmentId);
+}
+
 function aiPostEditHumanDiffBlock(translation, direction, humanOverride, liveSegmentId = '') {
   const aiEdited = resolvedAiPostEditText(translation, direction);
   const humanText = humanOverride !== undefined ? humanOverride : (translation.postEditText || aiEdited);
@@ -377,8 +406,9 @@ function renderStoredDiff(parts, unchanged) {
 export function renderAiHumanDiff(segmentId, editedText) {
   const project = store.getProject();
   const translation = store.getCurrentTranslation(store.getSegment(segmentId));
-  if (!translation?.aiPostEdit) return '<span class="muted">尚无 AI 译后编辑可比较</span>';
-  const aiEdited = resolvedAiPostEditText(translation, project.direction);
+  const edit = translation?.aiPostEdit || translation?.aiPostEditTrace;
+  if (!edit) return '<span class="muted">尚无 AI 译后编辑可比较</span>';
+  const aiEdited = resolvedAiPostEditText({ aiPostEdit: edit }, project.direction);
   return renderDiffContent(aiEdited, editedText, project.direction, '尚无额外人工修改');
 }
 function translationDiff(translation, target, direction, liveSegmentId = '') {
@@ -428,6 +458,7 @@ export function renderDiffParts(parts) {
   }).join('');
 }
 function statusIcon(status) {
+  if (status === 'draft') return '…';
   if (status === 'submitted') return '⇧';
   if (status === 'reviewed') return '✓';
   if (status === 'edited') return '✎';

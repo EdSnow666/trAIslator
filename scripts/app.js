@@ -1,6 +1,6 @@
 /**
  * 职责: 绑定 Translation AIducator 演示站点的全部用户交互
- * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js, ui/prompt-management.js
+ * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/ai-post-edit-actions.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js, ui/prompt-management.js
  * 依赖外部: DOM API, Blob API
  * 暴露: 页面入口
  */
@@ -9,8 +9,7 @@ import { store } from './state/store.js'; import './services/translation-drafts-
 import { initializeAuth } from './services/auth-client.js';
 import {
   createServerProject, createServerPrompt, loadProjectResourceCatalog, loadServerProjects, publishServerPrompt, refreshServerProject, unpublishServerPrompt,
-  prepareServerPostEdit, runServerAiTranslation, saveServerAiDecision, saveServerPostEdit,
-  selectServerPrompt, selectServerVersion, updateServerTranslationStates,
+  runServerAiTranslation, saveServerPostEdit, selectServerPrompt, selectServerVersion,
   saveServerBrief, generateServerProjectResource, generateServerProjectResources, cancelServerProjectGeneration,
   serverErrorProject, submitServerPrompt,
 } from './services/server-data.js';
@@ -31,7 +30,10 @@ import { openPromptInspectorModal } from './ui/prompt-inspector.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
 import { openPairImport, submitPairImport } from './ui/resource-import.js';
 import { runPostEditTask } from './ui/post-edit-task.js';
-import { cancelFullTranslation, confirmAllTranslations, generateAllPostEdits, generateAllTranslations, handleTranslationConfirmation, submitAllTranslations, submitCurrentTranslation } from './ui/translation-batch.js';
+import { acceptCurrentAiPostEdit, beginAiPostEdit, decideAiPostEdit, openAiChange,
+  runAiPostEdit, toggleAiPostEdit } from './ui/ai-post-edit-actions.js';
+import { cancelFullTranslation, confirmAllTranslations, generateAllPostEdits, generateAllTranslations,
+  handleTranslationConfirmation, submitAllTranslations, submitCurrentTranslation } from './ui/translation-batch.js';
 import { analyzePromptCoach, buildPromptCoachArtifact, buildPromptRuleAppendix } from './services/prompt-coach.js';
 import { buildPostEditCorpusArtifact } from './services/post-edit-export.js';
 import { buildProjectExportArtifact } from './services/project-export.js';
@@ -163,61 +165,6 @@ function closeTopMenus(exception = null) {
   });
 }
 
-function toggleAiPostEdit() {
-  const visible = !store.getState().aiPostEditVisible;
-  store.setAiPostEditVisible(visible);
-  showToast(visible ? '已显示 AI 译后编辑提案。' : '已隐藏 AI 译后编辑提案，决策仍会保留。');
-}
-
-async function runAiPostEdit(trigger) {
-  const segment = store.getSegment(trigger.dataset.segmentId || store.getSegment()?.id);
-  const translation = store.getCurrentTranslation(segment);
-  if (!translation || translation.origin === 'manual') return showToast('人工参考译文不进入 AI 译后编辑流程。');
-  if (!store.getState().serverMode) {
-    const proposal = store.generateAiPostEdit(segment.id, trigger.dataset.promptId);
-    return showToast(proposal ? 'AI 译后编辑提案已写入译文框，可逐项接受或拒绝。' : '模拟 AI 未发现可演示的结构修订。');
-  }
-  try {
-    const project = store.getProject();
-    await runServerAiTranslation(project, segment, 'ai_post_edit',
-      trigger.dataset.promptId || project.activePromptId, translation.id);
-    await refreshCurrentServerProject();
-    showToast('AI 译后编辑已完成，可在译文框逐项检查。');
-  } catch (error) { showToast(`AI 译后编辑失败：${error.message}`); }
-}
-
-function openAiChange(trigger, event) {
-  event.stopPropagation();
-  const wrapper = trigger.closest('.ai-change-wrap');
-  closeAiChangeMenus(wrapper);
-  wrapper?.classList.toggle('is-open');
-}
-
-async function decideAiPostEdit(trigger) {
-  const project = store.getProject();
-  const translation = store.getCurrentTranslation(store.getSegment(trigger.dataset.segmentId));
-  store.decideAiPostEdit(trigger.dataset.segmentId, trigger.dataset.changeId, trigger.dataset.decision);
-  if (!store.getState().serverMode || translation?.serverVersionKind !== 'ai_post_edit') return;
-  try {
-    await saveServerAiDecision(project, translation.id, trigger.dataset.changeId, trigger.dataset.decision);
-  } catch (error) {
-    showToast(`AI 修改决策保存失败：${error.message}`);
-  }
-}
-
-function beginAiPostEdit(trigger) {
-  const result = store.beginAiPostEditDraft(trigger.dataset.segmentId);
-  if (result === null) return;
-  showToast('已进入临时编辑；点击别处返回 AI Diff，草稿会保留。');
-  requestAnimationFrame(() => focusSegmentEditor(trigger.dataset.segmentId));
-}
-
-function applyAiPostEditResult(segmentId, acceptAll, message) {
-  const result = store.applyAiPostEdit(segmentId, acceptAll);
-  if (result === null) return;
-  showToast(message);
-  requestAnimationFrame(() => focusSegmentEditor(segmentId));
-}
 function togglePane(trigger) {
   togglePaneVisibility(trigger.dataset.paneTarget);
 }
@@ -315,13 +262,13 @@ async function saveSegment(trigger) {
   if (!segment || !translation || !editor) return;
   if (!store.getState().serverMode) {
     store.savePostEdit(segment.id, editor.value);
-    return showToast('译后编辑已保存为当前译文快照。');
+    return showToast('已保存');
   }
   trigger.disabled = true;
   try {
     await saveServerPostEdit(store.getProject(), segment, translation, editor.value);
     await refreshCurrentServerProject();
-    showToast('译后编辑已保存到服务器，旧版本仍然保留。');
+    showToast('已保存');
   } catch (error) {
     showToast(`保存失败：${error.message}`);
   } finally {
@@ -763,42 +710,6 @@ function handleShortcut(event) {
   if (!trigger) return;
   event.preventDefault();
   saveSegment(trigger);
-}
-async function persistAiPostEdit(segment, text, message) {
-  const project = store.getProject();
-  const translation = store.getCurrentTranslation(segment);
-  try {
-    const edit = await prepareServerPostEdit(project, segment, translation, text);
-    await updateServerTranslationStates(project, 'confirm', [segment.id], [edit]);
-    await refreshCurrentServerProject();
-    showToast(message);
-  } catch (error) {
-    await refreshCurrentServerProject().catch(() => undefined);
-    showToast(`保存 AI 译后编辑失败：${error.message}`);
-  }
-}
-
-async function acceptCurrentAiPostEdit(event) {
-  if (document.querySelector('.modal')) return;
-  const segment = store.getSegment();
-  const draft = segment ? store.getAiPostEditDraft(segment.id) : null;
-  if (draft?.active) {
-    event.preventDefault();
-    if (store.getState().serverMode) {
-      return persistAiPostEdit(segment, draft.text, 'AI 修改稿及人工调整已保存并确认。');
-    }
-    store.savePostEdit(segment.id, draft.text);
-    return showToast('AI 修改稿及人工调整已保存。');
-  }
-  if (!store.getState().aiPostEditVisible) return;
-  const edit = store.getCurrentTranslation(segment)?.aiPostEdit;
-  if (!segment || edit?.status !== 'pending') return;
-  event.preventDefault();
-  if (!store.getState().serverMode) {
-    return applyAiPostEditResult(segment.id, true, '已通过 Ctrl+Enter 接受 AI 修改。');
-  }
-  const result = store.applyAiPostEdit(segment.id, true);
-  if (result !== null) await persistAiPostEdit(segment, result, '已通过 Ctrl+Enter 接受并保存 AI 修改。');
 }
 const auth = await initializeAuth();
 let serverLoadError = '';

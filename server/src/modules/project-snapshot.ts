@@ -170,7 +170,7 @@ function aiEdit(context: AppContext, row: VersionRow, baseText: string, prompts:
   decisions: Map<string, Record<string, string>>) {
   const prompt = promptInfo(prompts, row.prompt_version_id);
   return {
-    status: 'applied',
+    status: 'pending',
     baseText,
     proposedText: row.content,
     resultText: row.content,
@@ -220,8 +220,13 @@ function mapVersion(context: AppContext, row: VersionRow, rowsById: Map<string, 
   };
   if (row.version_kind === 'ai_post_edit') mapped.aiPostEdit = aiEdit(context, row, baseline, prompts, decisions);
   if (row.version_kind === 'human_post_edit') {
-    mapped.serverBaselineKind = rowsById.get(row.comparison_version_id || '')?.version_kind || 'ai_translation';
+    const comparison = rowsById.get(row.comparison_version_id || '');
+    mapped.serverBaselineKind = comparison?.version_kind || 'ai_translation';
     mapped.diffArtifact = latestVersionDiff(context, row.id, 'machine_to_human');
+    if (comparison?.version_kind === 'ai_post_edit') {
+      mapped.aiPostEditTrace = aiEdit(context, comparison,
+        versionText(comparison, rowsById), prompts, decisions);
+    }
   }
   return mapped;
 }

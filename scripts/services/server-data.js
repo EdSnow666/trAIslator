@@ -289,7 +289,7 @@ export async function runServerFullTranslation(project, promptId, options = {}) 
   const runRequestId = options.requestId || requestId('full-translation');
   return apiRequest(`/api/workspaces/${project.workspaceId}/ai/execute-full`, {
     method: 'POST', body: JSON.stringify({ promptVersionId: promptId,
-      requestId: runRequestId }), signal: options.signal,
+      kind: options.kind || 'ai_translation', requestId: runRequestId }), signal: options.signal,
   });
 }
 export async function cancelServerAiTranslation(project, runRequestId) {

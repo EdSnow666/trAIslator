@@ -1,13 +1,13 @@
 /**
- * 职责: 执行单次全文 JSON 翻译、逐段 AI 译后编辑及确认/提交任务
+ * 职责: 执行单次全文 JSON 翻译、全文 AI 译后编辑及确认/提交任务
  * 依赖内部: ../state/store.js, ../services/server-data.js, ./dialogs.js
  * 依赖外部: AbortController
- * 暴露: generateAllTranslations | generateAllPostEdits | confirmAllTranslations | submitAllTranslations | submitCurrentTranslation | cancelFullTranslation
+ * 暴露: generateAllTranslations | generateAllPostEdits | confirmAllTranslations | submitAllTranslations | submitCurrentTranslation | cancelFullTranslation | moveToNextSegment
  */
 
 import { store } from '../state/store.js';
 import { cancelServerAiTranslation, refreshServerProject,
-  prepareServerPostEdit, runServerAiTranslation, runServerFullTranslation,
+  prepareServerPostEdit, runServerFullTranslation,
   updateServerTranslationStates } from '../services/server-data.js';
 import { clearTranslationDraft, getTranslationDraft } from '../services/translation-drafts.js';
 import { dialogs, showToast } from './dialogs.js';
@@ -22,34 +22,20 @@ function localGeneration(project) {
 
 function operationConfig(project, kind) {
   if (kind === 'ai_post_edit') return { kind, promptId: project.activePostEditPromptId,
-    title: '全文 AI 译后编辑', done: 'AI 译后编辑', baseId: (segment) => store.getCurrentTranslation(segment)?.id };
+    title: '全文 AI 译后编辑', done: 'AI 译后编辑' };
   return { kind: 'ai_translation', promptId: project.activePromptId,
-    title: '全文翻译', done: 'AI 译文', baseId: () => null };
-}
-
-async function runServerSegmentBatch(project, config) {
-  const controller = new AbortController();
-  activeBatch = { project, controller, requestId: null };
-  dialogs.openTranslationProgress(project.segments.length, config.title);
-  for (let index = 0; index < project.segments.length; index += 1) {
-    const requestId = `full-${config.kind}-${crypto.randomUUID()}`;
-    activeBatch.requestId = requestId;
-    dialogs.updateTranslationProgress(index, project.segments.length, `正在处理第 ${index + 1} 段`);
-    await runServerAiTranslation(project, project.segments[index], config.kind,
-      config.promptId, config.baseId(project.segments[index]), { requestId, signal: controller.signal });
-  }
-  store.replaceServerProject(await refreshServerProject(project));
-  showToast(`已生成 ${project.segments.length} 个${config.done}版本。`);
+    title: '全文翻译', done: 'AI 译文' };
 }
 
 async function runServerFullBatch(project, config) {
   const controller = new AbortController();
-  const requestId = `full-ai_translation-${crypto.randomUUID()}`;
+  const requestId = `full-${config.kind}-${crypto.randomUUID()}`;
   activeBatch = { project, controller, requestId };
   dialogs.openTranslationProgress(project.segments.length, config.title);
-  dialogs.updateTranslationProgress(0, project.segments.length, '正在进行全文翻译并校验段落 JSON');
+  dialogs.updateTranslationProgress(0, project.segments.length,
+    `正在进行${config.title}并校验段落 JSON`);
   const result = await runServerFullTranslation(project, config.promptId,
-    { requestId, signal: controller.signal });
+    { requestId, signal: controller.signal, kind: config.kind });
   dialogs.updateTranslationProgress(project.segments.length, project.segments.length,
     `已校验并写入 ${result.translationVersionIds.length} 个独立版本`);
   store.replaceServerProject(await refreshServerProject(project));
@@ -61,10 +47,9 @@ async function runBatch(kind) {
   if (!store.getState().serverMode) return localGeneration(project);
   const config = operationConfig(project, kind);
   try {
-    if (kind === 'ai_translation') await runServerFullBatch(project, config);
-    else await runServerSegmentBatch(project, config);
+    await runServerFullBatch(project, config);
   } catch (error) {
-    showToast(activeBatch?.controller.signal.aborted ? '批量任务已取消，已完成的版本仍然保留。'
+    showToast(activeBatch?.controller.signal.aborted ? '全文任务已取消，未通过完整校验的结果不会写入。'
       : `${config.title}中断：${error.message}`);
   } finally { activeBatch = null; dialogs.closeModal(); }
 }
@@ -131,11 +116,25 @@ async function confirmEditor(editor, event) {
       const edits = editor.value === saved ? []
         : [await prepareServerPostEdit(project, segment, translation, editor.value)];
       await updateServerTranslationStates(project, 'confirm', [segment.id], edits);
-    }
+    } else store.savePostEdit(segment.id, editor.value);
     clearTranslationDraft(project.id, segment.id, translation.id);
     if (store.getState().serverMode) store.replaceServerProject(await refreshServerProject(project));
-    showToast('当前译文已确认。');
+    showToast('已保存并确认');
+    moveToNextSegment(segment.id);
   } catch (error) { showToast(`确认失败：${error.message}`); }
+}
+
+export function moveToNextSegment(segmentId) {
+  const project = store.getProject();
+  const index = project.segments.findIndex((segment) => segment.id === segmentId);
+  const next = project.segments[index + 1];
+  if (!next) return false;
+  store.selectSegment(next.id);
+  requestAnimationFrame(() => {
+    const selector = `[data-segment-editor="${next.id}"], [data-ai-post-edit-field="${next.id}"]`;
+    document.querySelector(selector)?.focus();
+  });
+  return true;
 }
 
 export function handleTranslationConfirmation(event) {
@@ -146,7 +145,7 @@ export function handleTranslationConfirmation(event) {
 }
 
 export async function cancelFullTranslation() {
-  if (!activeBatch) return showToast('当前没有正在执行的全文翻译。');
+  if (!activeBatch) return showToast('当前没有正在执行的全文任务。');
   const task = activeBatch;
   task.controller.abort();
   if (task.requestId) await cancelServerAiTranslation(task.project, task.requestId).catch(() => false);

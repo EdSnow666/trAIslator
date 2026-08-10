@@ -16,7 +16,7 @@ import { openDatabase } from '../src/db/database.js';
 import { initializeAdmin } from '../src/ops/admin.js';
 import { runMigrationDeployment } from '../src/ops/deploy.js';
 import { seedDemoTemplates } from '../src/seed/demo-templates.js';
-import { exerciseFullTranslation, exerciseInvalidFullTranslation, exerciseRealAiExecution,
+import { exerciseFullPostEdit, exerciseFullTranslation, exerciseInvalidFullTranslation, exerciseRealAiExecution,
   startMockModel } from './ai-execution-test-helpers.js';
 interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
@@ -182,22 +182,28 @@ async function assertPostEditPersistence(app: FastifyInstance, cookie: string,
 }
 async function exerciseProjectSnapshot(app: FastifyInstance, cookie: string, projectId: string,
   workspaceId: string, segmentId: string, ids: { aiId: string; humanId: string }): Promise<void> {
-  const decision = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/ai-decisions`,
+  const accepted = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/ai-decisions`,
     headers: { cookie }, payload: { aiVersionId: ids.aiId, changeId: 'change-1',
       decision: 'accepted', requestId: 'decision-001' } });
-  assert.equal(decision.statusCode, 200, decision.body);
+  const rejected = await app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/ai-decisions`,
+    headers: { cookie }, payload: { aiVersionId: ids.aiId, changeId: 'change-2',
+      decision: 'rejected', requestId: 'decision-002' } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(rejected.statusCode, 200, rejected.body);
   const response = await app.inject({ method: 'GET',
     url: `/api/projects/${projectId}/snapshot?workspaceId=${workspaceId}`, headers: { cookie } });
   assert.equal(response.statusCode, 200, response.body);
   const segment = response.json().project.segments.find((item: { id: string }) => item.id === segmentId);
   assert.equal(segment.currentTranslationId, ids.humanId);
   const aiVersion = segment.translations.find((item: { id: string }) => item.id === ids.aiId);
-  assert.equal(aiVersion.serverVersionKind, 'ai_post_edit');
+  assert.equal(aiVersion.serverVersionKind, 'ai_post_edit'); assert.equal(aiVersion.aiPostEdit.status, 'pending');
   assert.equal(aiVersion.aiPostEdit.decisions['change-1'], 'accepted');
   assert.equal(aiVersion.aiPostEdit.diffArtifact.algorithmVersion, '1.0.0');
   const humanVersion = segment.translations.find((item: { id: string }) => item.id === ids.humanId);
   assert.equal(humanVersion.postEditText, 'Atomic human revision.');
-  assert.equal(humanVersion.serverBaselineKind, 'ai_post_edit');
+  assert.equal(humanVersion.serverBaselineKind, 'ai_post_edit'); assert.equal(humanVersion.aiPostEditTrace.status, 'pending');
+  assert.equal(humanVersion.aiPostEditTrace.decisions['change-1'], 'accepted');
+  assert.equal(humanVersion.aiPostEditTrace.decisions['change-2'], 'rejected');
   assert.equal(humanVersion.serverComparisonVersionId, ids.aiId);
   assert.equal(humanVersion.serverRootVersionId, aiVersion.serverRootVersionId);
   assert.equal(humanVersion.diffArtifact.algorithmVersion, '1.0.0');
@@ -740,6 +746,11 @@ async function exercisePromptInspector(app: FastifyInstance, sessions: TestSessi
   assert.equal(typeof payload.overarchingPrompt, 'string');
   assert.ok(payload.projectBrief && typeof payload.projectBrief === 'object');
   assert.ok(Array.isArray(payload.terminology) && Array.isArray(payload.translationMemory));
+  const fullPostEdit = result.json().operations.find(
+    (item: { id: string }) => item.id === 'full_ai_post_edit');
+  const fullPostEditPayload = JSON.parse(fullPostEdit.messages[1].content);
+  assert.ok(fullPostEditPayload.segments.every(
+    (item: { currentTranslation: string | null }) => 'currentTranslation' in item));
   const teacherView = await app.inject({ method: 'GET', url, headers: { cookie: sessions.teacher.cookie } });
   assert.equal(teacherView.statusCode, 200, teacherView.body);
   const archivedId = await createStudentPrompt(app, sessions.student.cookie, scenario.projectId);
@@ -772,6 +783,7 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     await exerciseEditedResourceInheritance(app, sessions);
     const serverModelId = await exerciseServerModelConfig(app, sessions, mockModel.baseUrl);
     await exerciseFullTranslation(app, sessions, scenario);
+    await exerciseFullPostEdit(app, sessions, scenario);
     await exerciseInvalidFullTranslation(app, sessions, scenario, mockModel.baseUrl);
     await exerciseProviderErrorDetail(app, sessions, mockModel.baseUrl);
     await exerciseDeferredGeneration(app, sessions, pendingProjectId);
