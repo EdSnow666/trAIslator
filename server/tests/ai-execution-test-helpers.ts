@@ -2,7 +2,7 @@
  * 职责: 提供后端集成测试所需的模拟模型及逐句/全文 AI 执行断言
  * 依赖内部: 无
  * 依赖外部: node:assert, node:http, fastify
- * 暴露: startMockModel | exerciseRealAiExecution | exerciseFullTranslation | exerciseFullPostEdit | exerciseInvalidFullTranslation
+ * 暴露: startMockModel | AI 执行、班级权限及 Prompt Coach 集成断言
  */
 
 import assert from 'node:assert/strict';
@@ -10,10 +10,22 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { FastifyInstance } from 'fastify';
 
 interface SessionSet { student: { cookie: string }; teacher: { cookie: string } }
-interface Scenario { projectId: string; workspaceId: string; segmentId: string; promptId: string }
+interface Scenario {
+  projectId: string; classId: string; workspaceId: string; segmentId: string; promptId: string;
+}
+
+function mockCoachContent(messages: Array<{ content?: string }>): string {
+  const payload = JSON.parse(messages[1]?.content || '{}') as
+    { records?: Array<{ recordId: string }> };
+  const evidenceRecordIds = (payload.records || []).map((item) => item.recordId);
+  return JSON.stringify({ rules: [{ id: 'finite-clause', title: '明确谓语核心',
+    instruction: '优先使用边界明确的有限从句，避免松散的名词化堆叠。',
+    signal: '人工修改集中重组了句子谓语与从句边界。', evidenceRecordIds }] });
+}
 
 function mockModelContent(messages: Array<{ content?: string }> = []): string {
   const instruction = messages[0]?.content || '';
+  if (instruction.includes('AI prompt coach')) return mockCoachContent(messages);
   if (instruction.includes('preserving paragraph alignment')) {
     const payload = JSON.parse(messages[1]?.content || '{}') as
       { segments?: Array<{ segmentId: string }> };
@@ -139,6 +151,105 @@ export async function exerciseFullPostEdit(app: FastifyInstance, sessions: Sessi
   assert.equal(first.statusCode, 201, first.body);
   assert.deepEqual(retry.json().translationVersionIds, first.json().translationVersionIds);
   await assertFullPostEditSnapshot(app, sessions, scenario, baseIds);
+}
+
+export async function exerciseClassPostEditPolicy(app: FastifyInstance, sessions: SessionSet,
+  scenario: Scenario): Promise<void> {
+  const url = `/api/classes/${scenario.classId}/features`;
+  const disabled = await app.inject({ method: 'PATCH', url, headers: { cookie: sessions.teacher.cookie },
+    payload: { aiPostEditEnabled: false } });
+  assert.equal(disabled.statusCode, 200, disabled.body);
+  const snapshot = await app.inject({ method: 'GET',
+    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(snapshot.json().project.aiPostEditAllowed, false);
+  assert.equal(snapshot.json().project.activePostEditPromptId, null);
+  assert.equal(snapshot.json().project.prompts.some(
+    (item: { promptKind: string }) => item.promptKind === 'post_edit'), false);
+  await assertPostEditInspectorHidden(app, sessions.student.cookie, scenario);
+  const denied = await app.inject({ method: 'POST', url: `/api/workspaces/${scenario.workspaceId}/ai/execute`,
+    headers: { cookie: sessions.student.cookie }, payload: { segmentId: scenario.segmentId,
+      baseVersionId: snapshot.json().project.segments[0].currentTranslationId,
+      kind: 'ai_post_edit', requestId: 'blocked-post-edit-001' } });
+  assert.equal(denied.statusCode, 403, denied.body);
+  const enabled = await app.inject({ method: 'PATCH', url, headers: { cookie: sessions.teacher.cookie },
+    payload: { aiPostEditEnabled: true } });
+  assert.equal(enabled.statusCode, 200, enabled.body);
+}
+
+async function assertPostEditInspectorHidden(app: FastifyInstance, cookie: string,
+  scenario: Scenario): Promise<void> {
+  const query = `projectId=${scenario.projectId}&workspaceId=${scenario.workspaceId}`;
+  const response = await app.inject({ method: 'GET',
+    url: `/api/manage/prompt-structures?${query}`, headers: { cookie } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().operations.some(
+    (item: { id: string }) => item.id.includes('post_edit')), false);
+  assert.equal('postEdit' in response.json().promptLayers, false);
+}
+
+async function confirmWorkspace(app: FastifyInstance, cookie: string,
+  workspaceId: string): Promise<void> {
+  const response = await app.inject({ method: 'POST',
+    url: `/api/workspaces/${workspaceId}/translations/confirm`, headers: { cookie },
+    payload: { requestId: 'coach-confirm-all-001' } });
+  assert.equal(response.statusCode, 200, response.body);
+}
+
+export async function exercisePromptCoach(app: FastifyInstance, sessions: SessionSet,
+  scenario: Scenario): Promise<void> {
+  const personalUrl = `/api/workspaces/${scenario.workspaceId}/prompt-coach`;
+  const pendingState = await app.inject({ method: 'POST',
+    url: `/api/workspaces/${scenario.workspaceId}/current-version`,
+    headers: { cookie: sessions.student.cookie }, payload: { segmentId: scenario.segmentId,
+      translationVersionId: await currentVersionId(app, sessions.student.cookie, scenario),
+      requestId: 'coach-mark-pending-001' } });
+  assert.equal(pendingState.statusCode, 200, pendingState.body);
+  const pending = await app.inject({ method: 'POST', url: personalUrl,
+    headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-before-confirm-001' } });
+  assert.equal(pending.statusCode, 409, pending.body);
+  await confirmWorkspace(app, sessions.student.cookie, scenario.workspaceId);
+  const personal = await app.inject({ method: 'POST', url: personalUrl,
+    headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-personal-001' } });
+  assert.equal(personal.statusCode, 201, personal.body);
+  assert.ok(personal.json().rules[0].supportCount >= 1);
+  assert.equal(personal.json().schema, 'translation-aiducator.prompt-coach.v3');
+  const inactiveCancel = await app.inject({ method: 'POST', url: `${personalUrl}/cancel`,
+    headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-personal-001' } });
+  assert.equal(inactiveCancel.statusCode, 200, inactiveCancel.body);
+  assert.equal(inactiveCancel.json().cancelled, false);
+  const settings = await app.inject({ method: 'GET', url: '/api/prompt-coach/settings',
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(settings.statusCode, 200, settings.body);
+  assert.equal(settings.json().customPrompt, null);
+  const multi = await app.inject({ method: 'POST', url: '/api/prompt-coach/projects',
+    headers: { cookie: sessions.student.cookie }, payload: { projectIds: [scenario.projectId],
+      coachPrompt: '只总结可复用的句子结构修改。', requestId: 'coach-projects-001' } });
+  assert.equal(multi.statusCode, 201, multi.body);
+  assert.equal(multi.json().scope.type, 'projects');
+  assert.equal(multi.json().coachPromptSource, 'custom');
+  const savedSettings = await app.inject({ method: 'GET', url: '/api/prompt-coach/settings',
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(savedSettings.json().customPrompt, '只总结可复用的句子结构修改。');
+  const wholeClass = await app.inject({ method: 'POST', url: `/api/classes/${scenario.classId}/prompt-coach`,
+    headers: { cookie: sessions.teacher.cookie }, payload: { requestId: 'coach-class-001' } });
+  assert.equal(wholeClass.statusCode, 201, wholeClass.body);
+  assert.ok(wholeClass.json().summary.studentCount >= 1);
+  const submissions = await app.inject({ method: 'GET', url: '/api/teaching/submissions',
+    headers: { cookie: sessions.teacher.cookie } });
+  assert.ok(submissions.json().translations.some(
+    (item: { modificationTrace: unknown[] }) => item.modificationTrace.length >= 3));
+  assert.ok(submissions.json().translations.every(
+    (item: { submittedById: string }) => typeof item.submittedById === 'string'));
+}
+
+async function currentVersionId(app: FastifyInstance, cookie: string,
+  scenario: Scenario): Promise<string> {
+  const snapshot = await app.inject({ method: 'GET',
+    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie } });
+  return snapshot.json().project.segments.find(
+    (item: { id: string }) => item.id === scenario.segmentId).currentTranslationId;
 }
 
 export async function exerciseInvalidFullTranslation(app: FastifyInstance, sessions: SessionSet,

@@ -21,6 +21,7 @@ async function resolvePrompt(project, content) {
 
 export async function runPostEditTask(trigger) {
   const project = store.getProject();
+  if (project.aiPostEditAllowed === false) return showToast('当前班级仅允许人工编辑');
   const segment = store.getSegment();
   const translation = store.getCurrentTranslation(segment);
   if (!segment || !translation) return showToast('当前句没有可供译后编辑的译文。');

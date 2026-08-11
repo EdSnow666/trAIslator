@@ -13,5 +13,8 @@
 | `../../migrations/0008_translation_submissions.sql` | 学生译文主动提交及教师/管理员跨工作空间查看索引 |
 | `../../migrations/0009_translation_traceability.sql` | 译文根版本/机器比较基线、持久化 Diff、精确工作流事件与 AI 决策历史 |
 | `../../migrations/0010_full_translation_batches.sql` | 全文 JSON 翻译与译后编辑批次的段落计数、ID 校验结果与响应哈希审计 |
+| `../../migrations/0011_class_ai_coach_and_a36_recovery.sql` | 班级 AI 译后编辑策略、Prompt Coach 运行快照及 Article 36 人工 Diff 恢复 |
+| `../../migrations/0012_addressing_workspace_prompt_coach.sql` | 将 Article 36 已恢复人工 Diff 重新挂接到管理员工作空间并标记为已确认，供 Prompt Coach 使用 |
+| `../../migrations/0013_multi_project_prompt_coach.sql` | 多项目 Prompt Coach 范围、用户可编辑教练 Prompt 偏好及每次运行的实际 Prompt/项目快照 |
 
 约束：生产服务启动不自动迁移；必须先由无用户 Token 的 `db:deploy` 运维命令完成备份、migration 与完整性检查。

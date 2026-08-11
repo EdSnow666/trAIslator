@@ -50,3 +50,7 @@ test('AI 和人工编辑沿用根译本序号', () => {
   assert.equal(translationSequenceNumber(translations[3], translations), 2);
   assert.equal(translationRootCount(translations), 2);
 });
+
+test('空译文句段不会计算版本序号', () => {
+  assert.equal(translationSequenceNumber(undefined, []), 0);
+});

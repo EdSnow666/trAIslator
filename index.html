@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="面向英中、中英翻译教学的 Prompt 驱动型 CAT 演示工具">
   <title>Translation AIducator</title>
-  <link rel="stylesheet" href="./styles/base.css?v=20260805-03">
+  <link rel="stylesheet" href="./styles/base.css?v=20260810-01">
   <link rel="stylesheet" href="./styles/layout.css?v=20260806-08">
   <link rel="stylesheet" href="./styles/components.css?v=20260806-07">
   <link rel="stylesheet" href="./styles/prompt-coach.css?v=20260804-01">
@@ -38,7 +38,7 @@
             <button class="menu-item" data-action="open-pair-import" data-import-kind="reference">上传参考译文</button>
             <span class="menu-divider"></span>
             <button id="export-button" class="menu-item">导出项目</button>
-            <button class="menu-item" data-action="download-post-edit-json">导出全部译后编辑 JSON</button>
+            <button class="menu-item" data-ai-post-edit-control data-action="download-post-edit-json">导出全部译后编辑 JSON</button>
             <span class="menu-divider"></span>
             <button id="reset-button" class="menu-item danger-text">重置预存演示</button>
           </div>
@@ -47,7 +47,7 @@
           <summary>翻译</summary>
           <div class="menu-popover">
             <button id="generate-current-button" class="menu-item">重译当前句</button>
-            <button class="menu-item" data-action="ai-post-edit-current">用当前 Prompt AI 译后编辑当前句</button>
+            <button class="menu-item" data-ai-post-edit-control data-action="ai-post-edit-current">用当前 Prompt AI 译后编辑当前句</button>
             <button id="generate-all-button" class="menu-item">用当前 Prompt 重译全文</button>
           </div>
         </details>
@@ -56,7 +56,7 @@
           <div class="menu-popover">
             <button class="menu-item" data-action="open-right-tab" data-tab="prompt">当前译文与 Prompt 详情</button>
             <button class="menu-item" data-action="open-prompt-lineage" data-prompt-kind="translation">查看 Prompt 谱系</button>
-            <button class="menu-item" data-action="open-post-edit-task">译后编辑 Prompt</button>
+            <button class="menu-item" data-ai-post-edit-control data-action="open-post-edit-task">译后编辑 Prompt</button>
             <button id="new-prompt-button" class="menu-item">新建 Prompt 版本</button>
             <button class="menu-item" data-action="generate-project-resource" data-resource="prompt">自动生成全文 Prompt</button>
             <button id="prompt-inspector-button" class="menu-item" data-action="open-prompt-inspector" hidden>后台 Prompt 发送结构</button>
@@ -86,7 +86,7 @@
             <button id="all-versions-button" class="menu-item menu-toggle" aria-pressed="false">
               <span>查看全部翻译版本</span><span class="menu-check">✓</span>
             </button>
-            <button id="ai-post-edit-toggle" class="menu-item menu-toggle" data-action="toggle-ai-post-edit" aria-pressed="true">
+            <button id="ai-post-edit-toggle" data-ai-post-edit-control class="menu-item menu-toggle" data-action="toggle-ai-post-edit" aria-pressed="true">
               <span>隐藏 AI 译后编辑</span><span class="menu-check is-visible">✓</span>
             </button>
             <span class="menu-divider"></span>
@@ -168,12 +168,12 @@
         <div class="editor-scroll">
           <div class="column-head">
             <div>原文 SOURCE</div>
-            <div class="target-column-heading"><span>译文 TARGET · 可直接译后编辑</span>
+            <div class="target-column-heading"><span id="target-column-label">译文 TARGET · 可直接译后编辑</span>
               <details class="menu-dropdown bulk-actions-dropdown">
                 <summary class="brief-toolbar-button">一键操作</summary>
                 <div class="bulk-actions-menu">
                   <button class="bulk-action-card is-translation" data-action="bulk-generate-all"><span class="bulk-action-icon">▤</span><span><strong>重译全文</strong><small>一次生成全文并按段保存</small></span></button>
-                  <button class="bulk-action-card is-post-edit" data-action="bulk-post-edit-all"><span class="bulk-action-icon">✦</span><span><strong>译后编辑全文</strong><small>一次编辑全文并按段保存</small></span></button>
+                  <button class="bulk-action-card is-post-edit" data-ai-post-edit-control data-action="bulk-post-edit-all"><span class="bulk-action-icon">✦</span><span><strong>译后编辑全文</strong><small>一次编辑全文并按段保存</small></span></button>
                   <button class="bulk-action-card is-confirm" data-action="bulk-confirm-all"><span class="bulk-action-icon">✓</span><span><strong>确认所有译文</strong><small>统一标记为已确认</small></span></button>
                   <button class="bulk-action-card is-submit" data-action="bulk-submit-all"><span class="bulk-action-icon">⇧</span><span><strong>提交所有译文</strong><small>发送给教师集中审阅</small></span></button>
                 </div>
@@ -211,6 +211,6 @@
   <div id="modal-root"></div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
-  <script type="module" src="./scripts/app.js?v=20260806-03"></script>
+  <script type="module" src="./scripts/app.js?v=20260810-04"></script>
 </body>
 </html>

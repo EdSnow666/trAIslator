@@ -10,10 +10,11 @@ import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { addClassMember, classDetail, createClass, createExperiment, createExperimentStage,
   dissolveClass, enrollParticipant, experimentDetail, listClasses, listExperiments, listManagedSubmissions, removeClassMember,
-  updateClass,
+  setClassAiPostEdit, updateClass,
   setExperimentStatus, withdrawParticipant } from './teaching.js';
 
 interface ClassBody { name: string; code: string }
+interface ClassFeatureBody { aiPostEditEnabled: boolean }
 interface ClassParams { classId: string }
 interface MemberBody { username: string; membershipRole: 'teacher' | 'student' }
 interface MemberParams extends ClassParams { userId: string; membershipRole: 'teacher' | 'student' }
@@ -44,6 +45,12 @@ function registerClassRoutes(app: FastifyInstance, context: AppContext): void {
   app.delete<{ Params: ClassParams }>('/api/classes/:classId',
     { preHandler: requireRoles('admin', 'teacher') }, async (request) => {
       dissolveClass(context, request.authUser!, request.params.classId);
+      return { ok: true };
+    });
+  app.patch<{ Params: ClassParams; Body: ClassFeatureBody }>('/api/classes/:classId/features',
+    { preHandler: requireRoles('admin', 'teacher') }, async (request) => {
+      setClassAiPostEdit(context, request.authUser!, request.params.classId,
+        request.body.aiPostEditEnabled !== false);
       return { ok: true };
     });
 }

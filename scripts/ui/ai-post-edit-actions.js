@@ -16,18 +16,30 @@ async function refreshProject() {
   store.replaceServerProject(await refreshServerProject(project));
 }
 
+function aiPostEditBlocked() {
+  return store.getProject().aiPostEditAllowed === false;
+}
+
+function rejectBlockedAiPostEdit() {
+  if (!aiPostEditBlocked()) return false;
+  showToast('当前班级仅允许人工编辑');
+  return true;
+}
+
 function focusSegmentEditor(segmentId) {
   const selector = `[data-segment-editor="${segmentId}"], [data-ai-post-edit-field="${segmentId}"]`;
   document.querySelector(selector)?.focus();
 }
 
 export function toggleAiPostEdit() {
+  if (rejectBlockedAiPostEdit()) return;
   const visible = !store.getState().aiPostEditVisible;
   store.setAiPostEditVisible(visible);
   showToast(visible ? '已显示' : '已隐藏');
 }
 
 export async function runAiPostEdit(trigger) {
+  if (rejectBlockedAiPostEdit()) return;
   const segment = store.getSegment(trigger.dataset.segmentId || store.getSegment()?.id);
   const translation = store.getCurrentTranslation(segment);
   if (!translation || translation.origin === 'manual') return showToast('人工参考译文不进入 AI 译后编辑流程。');
@@ -51,6 +63,7 @@ function closeChangeMenus(exception = null) {
 }
 
 export function openAiChange(trigger, event) {
+  if (rejectBlockedAiPostEdit()) return;
   event.stopPropagation();
   const wrapper = trigger.closest('.ai-change-wrap');
   closeChangeMenus(wrapper);
@@ -58,6 +71,7 @@ export function openAiChange(trigger, event) {
 }
 
 export async function decideAiPostEdit(trigger, event) {
+  if (rejectBlockedAiPostEdit()) return;
   event?.preventDefault(); event?.stopPropagation();
   const segment = store.getSegment(trigger.dataset.segmentId);
   const translation = store.getCurrentTranslation(segment);
@@ -78,6 +92,7 @@ export async function decideAiPostEdit(trigger, event) {
 }
 
 export function beginAiPostEdit(trigger) {
+  if (rejectBlockedAiPostEdit()) return;
   const result = store.beginAiPostEditDraft(trigger.dataset.segmentId);
   if (result === null) return;
   showToast('待保存');
@@ -117,6 +132,7 @@ async function acceptActiveDraft(event, segment, draft) {
 }
 
 export async function acceptCurrentAiPostEdit(event) {
+  if (aiPostEditBlocked()) return false;
   if (document.querySelector('.modal')) return;
   const segment = store.getSegment();
   const draft = segment ? store.getAiPostEditDraft(segment.id) : null;

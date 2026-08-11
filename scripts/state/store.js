@@ -216,6 +216,7 @@ function selectProject(projectId) {
 }
 
 function selectSegment(segmentId) {
+  if (state.currentSegmentId === segmentId) return;
   state.currentSegmentId = segmentId;
   state.detailTranslationId = getSegment(segmentId)?.currentTranslationId || null;
   state.rightTab = 'prompt';
@@ -536,6 +537,13 @@ function saveBrief(content) {
   emit();
 }
 
+function setPromptCoachResult(result) {
+  const project = getProject();
+  if (!project) return;
+  project.promptCoachResult = result;
+  emit();
+}
+
 function reset() {
   aiPostEditDrafts.clear();
   state = createInitialState();
@@ -583,6 +591,7 @@ export const store = {
   generateMock,
   addImportedProject,
   saveBrief,
+  setPromptCoachResult,
   saveApiConfig,
   reset,
 };

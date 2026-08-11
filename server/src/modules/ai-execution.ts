@@ -2,14 +2,14 @@
  * 职责: 使用统一服务器模型执行翻译、AI 译后编辑及项目任务书/Prompt 生成
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
  * 依赖外部: Fetch API
- * 暴露: executeAiTranslation | executeFullTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | testServerModelConnection | AiExecutionInput | FullTranslationInput | ProjectTextGenerationInput
+ * 暴露: executeAiTranslation | executeFullTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | runConfiguredModel | testServerModelConnection | AiExecutionInput | FullTranslationInput | ProjectTextGenerationInput
  */
 
 import type { AuthUser } from '../auth/types.js';
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { jsonText, newId, nowIso, sha256 } from '../shared.js';
-import { ensureProjectManage, ensureWorkspaceOwner } from './access.js';
+import { ensureAiPostEditAllowed, ensureProjectManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
 import { fullTranslationMessages, projectMessages, translationMessages } from './prompt-structures.js';
 import { listVisiblePrompts } from './prompts.js';
@@ -58,7 +58,7 @@ interface FullExecutionContext {
   promptVersionId: string; projectBrief: unknown; overarchingPrompt: string | null;
   customPrompt: string | null; terms: unknown[]; translationMemory: unknown[];
 }
-interface ProviderResult { content: string; usage: unknown; attempts: number; latencyMs: number }
+export interface ProviderResult { content: string; usage: unknown; attempts: number; latencyMs: number }
 interface ActiveProjectRun { projectId: string; controller: AbortController }
 const activeProjectRuns = new Map<string, ActiveProjectRun>();
 const activeTranslationRuns = new Map<string, { workspaceId: string; controller: AbortController }>();
@@ -249,6 +249,14 @@ async function callWithRetries(model: ResolvedServerModel, body: unknown, signal
     }
   }
   throw Object.assign(lastError, { attempts, latencyMs: Date.now() - started });
+}
+
+export async function runConfiguredModel(context: AppContext, body: unknown,
+  modelConfigId?: string, signal?: AbortSignal): Promise<ProviderResult & { modelConfigId: string; model: string }> {
+  const model = resolveServerModel(context, modelConfigId);
+  const payload = typeof body === 'object' && body !== null ? { ...body, model: model.model } : body;
+  const result = await callWithRetries(model, payload, signal);
+  return { ...result, modelConfigId: model.id, model: model.model };
 }
 
 function existingRun(context: AppContext, requestId: string): { id: string; status: string; versionId: string | null } | null {
@@ -481,6 +489,7 @@ export async function executeAiTranslation(context: AppContext, user: AuthUser, 
   }
   if (prior) throw new AppError(409, 'AI_REQUEST_EXISTS', '该 AI 请求已存在，请使用新的 requestId 重试。');
   const row = workspaceRow(context, workspaceId);
+  if (input.kind === 'ai_post_edit') ensureAiPostEditAllowed(context, user, row.project_id);
   const data = buildExecutionContext(context, user, row, input);
   const model = resolveServerModel(context, input.modelConfigId);
   const runId = createPendingRun(context, user, row, input, data, model);
@@ -513,6 +522,9 @@ function priorFullResult(context: AppContext, input: FullTranslationInput) {
 async function executeNewFullTranslation(context: AppContext, user: AuthUser, workspaceId: string,
   input: FullTranslationInput) {
   const row = workspaceRow(context, workspaceId);
+  if ((input.kind || 'ai_translation') === 'ai_post_edit') {
+    ensureAiPostEditAllowed(context, user, row.project_id);
+  }
   const data = buildFullExecutionContext(context, user, row, input);
   const model = resolveServerModel(context, input.modelConfigId);
   const runId = createPendingFullRun(context, user, row, input, data, model);

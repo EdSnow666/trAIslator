@@ -2,7 +2,7 @@
  * 职责: 集中执行项目、班级、作业空间的行级访问判断
  * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts
  * 依赖外部: 无
- * 暴露: ensureProjectView | ensureProjectManage | ensureWorkspaceView | ensureWorkspaceOwner | ensureClassManage | ensureExperimentManage
+ * 暴露: ensureProjectView | ensureProjectManage | ensureWorkspaceView | ensureWorkspaceOwner | ensureClassManage | ensureExperimentManage | aiPostEditAllowed | ensureAiPostEditAllowed
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -77,6 +77,23 @@ export function ensureWorkspaceOwner(context: AppContext, user: AuthUser, worksp
   if (!row) throw new AppError(404, 'WORKSPACE_NOT_FOUND', '工作空间不存在。');
   if (row.owner_user_id === user.id || isAdmin(user)) return;
   throw new AppError(403, 'WORKSPACE_EDIT_FORBIDDEN', '不能修改其他用户的工作空间。');
+}
+
+export function aiPostEditAllowed(context: AppContext, user: AuthUser, _projectId: string): boolean {
+  if (!user.roles.includes('student') || isAdmin(user) || isTeacher(user)) return true;
+  const blocked = context.db.prepare(`SELECT 1 FROM class_memberships cm
+    JOIN class_feature_policies cfp ON cfp.class_id = cm.class_id
+      AND cfp.feature_code = 'ai_post_edit' AND cfp.enabled = 0
+    WHERE cm.user_id = ?
+      AND cm.membership_role = 'student' AND cm.status = 'active' LIMIT 1`)
+    .get(user.id);
+  return !blocked;
+}
+
+export function ensureAiPostEditAllowed(context: AppContext, user: AuthUser, projectId: string): void {
+  if (!aiPostEditAllowed(context, user, projectId)) {
+    throw new AppError(403, 'AI_POST_EDIT_DISABLED_FOR_CLASS', '教师已关闭当前班级的 AI 译后编辑功能。');
+  }
 }
 
 export function ensureClassManage(context: AppContext, user: AuthUser, classId: string): void {

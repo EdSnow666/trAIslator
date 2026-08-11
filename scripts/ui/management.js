@@ -8,7 +8,7 @@
 import { apiRequest, currentAuth } from '../services/auth-client.js';
 import { showToast } from './dialogs.js';
 import { experimentPane, auditPane } from './management-experiments.js';
-import { escapeHtml } from './render.js';
+import { escapeHtml, renderDiffParts } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 const roleLabels = { admin: '管理员', teacher: '教师', student: '学生', experiment_user: '实验用户' };
@@ -18,7 +18,8 @@ function emptyState() {
   return { tab: 'teaching', classes: [], projects: [], users: [], experiments: [], events: [],
     submissions: { prompts: [], translations: [] },
     classDetail: null, experimentDetail: null, selectedClassId: null, selectedExperimentId: null,
-    auditPrefix: '', secret: null, classCreateOpen: false, editingClass: null };
+    auditPrefix: '', secret: null, classCreateOpen: false, editingClass: null,
+    classCoachResult: null, selectedSubmissionStudentId: null, selectedSubmissionProjectId: null };
 }
 
 function isAdmin() {
@@ -77,6 +78,18 @@ async function loadManagementData() {
   [managementState.classDetail, managementState.experimentDetail] = await Promise.all([
     loadClassDetail(), loadExperimentDetail(),
   ]);
+  syncSubmissionSelection();
+}
+
+function syncSubmissionSelection() {
+  const projects = managementState.classDetail?.projects || [];
+  if (!projects.some((item) => item.id === managementState.selectedSubmissionProjectId)) {
+    managementState.selectedSubmissionProjectId = projects[0]?.id || null;
+    managementState.selectedSubmissionStudentId = null;
+  }
+  if (!submissionStudents().some((item) => item.id === managementState.selectedSubmissionStudentId)) {
+    managementState.selectedSubmissionStudentId = null;
+  }
 }
 
 function roleText(roles) {
@@ -151,7 +164,11 @@ function classProjectRows() {
 function classDetailPanel() {
   const detail = managementState.classDetail;
   if (!detail) return '<section class="management-panel"><div class="empty-state">选择或创建班级后管理成员。</div></section>';
-  return `<section class="management-panel"><h4>已分配项目</h4><div class="management-members">${classProjectRows()}</div>
+  return `<section class="management-panel"><div class="management-feature-row"><span><strong>学生 AI 译后编辑</strong>
+      <small>${detail.aiPostEditEnabled ? '学生可使用 AI 译后编辑' : '学生仅可人工编辑'}</small></span>
+      <label class="management-switch"><input type="checkbox" data-management-action="class-ai-post-edit"
+        ${detail.aiPostEditEnabled ? 'checked' : ''}><span></span></label></div>
+    <h4>已分配项目</h4><div class="management-members">${classProjectRows()}</div>
     <h4>班级成员</h4><div class="management-members">${memberRows()}</div>
     <form class="management-inline-form" data-management-form="add-member">
       <input type="hidden" name="classId" value="${detail.id}">
@@ -229,14 +246,116 @@ function submittedTranslationRows() {
   if (!rows.length) return '<div class="empty-state">尚无学生提交的译文。</div>';
   return rows.map((item) => `<details class="submission-row"><summary><strong>${escapeHtml(item.projectName)} · ${escapeHtml(item.submittedBy)}</strong>
     <small>${escapeHtml(item.versionKind)} · ${escapeHtml(item.submittedAt)}</small></summary>
-    <p class="submission-source">${escapeHtml(item.source)}</p><div class="submission-content">${escapeHtml(item.content)}</div></details>`).join('');
+    <p class="submission-source">${escapeHtml(item.source)}</p><div class="submission-content">${escapeHtml(item.content)}</div>
+    ${submissionTraceMarkup(item.modificationTrace || [])}</details>`).join('');
+}
+
+function submissionStudents() {
+  return (managementState.classDetail?.members || []).filter((member) => (
+    member.membershipRole === 'student' && member.status === 'active'));
+}
+
+function studentProjectSubmissions(studentId, projectId) {
+  const translations = (managementState.submissions.translations || []).filter((item) => (
+    item.submittedById === studentId && item.projectId === projectId));
+  const prompts = (managementState.submissions.prompts || []).filter((item) => (
+    item.submittedById === studentId && item.projectId === projectId));
+  return { translations, prompts };
+}
+
+function studentSubmissionStatus(studentId) {
+  const projectId = managementState.selectedSubmissionProjectId;
+  const count = projectId ? studentProjectSubmissions(studentId, projectId).translations.length : 0;
+  return count ? { label: '已提交', tone: 'submitted', count }
+    : { label: '未提交', tone: 'missing', count: 0 };
+}
+
+function studentInitial(name) {
+  const parts = String(name || '?').trim().split(/\s+/);
+  return parts.length > 1 ? `${parts[0][0]}${parts[1][0]}`.toUpperCase() : parts[0].slice(0, 1).toUpperCase();
+}
+
+function submissionSeatMap() {
+  const students = submissionStudents();
+  if (!students.length) return '<div class="empty-state">当前班级花名册中没有有效学生。</div>';
+  return `<div class="submission-seat-map">${students.map((student) => {
+    const status = studentSubmissionStatus(student.id);
+    const active = student.id === managementState.selectedSubmissionStudentId ? ' is-active' : '';
+    return `<button class="student-seat ${status.tone}${active}" data-management-action="select-submission-student"
+      data-user-id="${student.id}"><span class="student-avatar">${escapeHtml(studentInitial(student.displayName))}</span>
+      <strong>${escapeHtml(student.displayName)}</strong><small>${status.label}${status.count ? ` · ${status.count} 条` : ''}</small></button>`;
+  }).join('')}</div>`;
+}
+
+function submissionProjectCards() {
+  const projects = managementState.classDetail?.projects || [];
+  if (!projects.length) return '<div class="empty-state">当前班级尚未分配项目。</div>';
+  const studentIds = new Set(submissionStudents().map((item) => item.id));
+  return `<div class="submission-project-cards">${projects.map((project) => {
+    const active = project.id === managementState.selectedSubmissionProjectId ? ' is-active' : '';
+    const submitters = new Set((managementState.submissions.translations || [])
+      .filter((item) => item.projectId === project.id && studentIds.has(item.submittedById))
+      .map((item) => item.submittedById)).size;
+    return `<button class="submission-project-card${active}" data-management-action="select-submission-project"
+      data-project-id="${project.id}"><strong>${escapeHtml(project.name)}</strong>
+      <small>${escapeHtml(project.direction)} · ${submitters}/${submissionStudents().length} 人已提交</small></button>`;
+  }).join('')}</div>`;
+}
+
+function projectSubmissionDetails(student, project) {
+  const data = studentProjectSubmissions(student.id, project.id);
+  const status = data.translations.length ? `${data.translations.length} 条译文` : '未提交译文';
+  const translations = data.translations.map((item) => `<details class="submission-row"><summary>
+    <strong>${escapeHtml(item.source).slice(0, 70)}</strong><small>${escapeHtml(item.submittedAt)}</small></summary>
+    <p class="submission-source">${escapeHtml(item.source)}</p><div class="submission-content">${escapeHtml(item.content)}</div>
+    ${submissionTraceMarkup(item.modificationTrace || [])}</details>`).join('');
+  const prompts = data.prompts.map((item) => `<details class="submission-row"><summary><strong>Prompt v${item.version} · ${escapeHtml(item.title)}</strong>
+    <small>${escapeHtml(item.submittedAt)}</small></summary><div class="submission-content">${escapeHtml(item.content)}</div>
+    <button class="text-button" data-management-action="publish-submitted-prompt" data-project-id="${item.projectId}"
+      data-prompt-id="${item.promptVersionId}">发布为项目 Prompt</button></details>`).join('');
+  return `<details class="student-project-submission"><summary><strong>${escapeHtml(project.name)}</strong><span>${status}</span></summary>
+    <div class="student-project-actions"><button class="button button-soft" data-management-action="export-student-project"
+      data-user-id="${student.id}" data-project-id="${project.id}">导出</button></div>
+    ${translations || '<p class="muted">该学生尚未提交本项目译文。</p>'}${prompts}</details>`;
+}
+
+function selectedStudentSubmissions() {
+  const student = submissionStudents().find((item) => item.id === managementState.selectedSubmissionStudentId);
+  if (!student) return '<div class="empty-state">点击学生头像查看其项目提交、译文和 Diff。</div>';
+  const project = (managementState.classDetail?.projects || []).find(
+    (item) => item.id === managementState.selectedSubmissionProjectId);
+  if (!project) return '<div class="empty-state">请先选择项目。</div>';
+  return `<section class="management-panel student-submission-detail"><div class="management-section-head">
+    <h3>${escapeHtml(student.displayName)} · ${escapeHtml(project.name)}</h3><span>@${escapeHtml(student.username)}</span></div>
+    ${projectSubmissionDetails(student, project)}</section>`;
+}
+
+function submissionTraceMarkup(trace) {
+  if (!trace.length) return '<p class="muted">此提交没有可恢复的人工修改链。</p>';
+  const rows = trace.map((version) => `<div class="submission-trace-version"><strong>${escapeHtml(version.versionKind)}</strong>
+    <small>${escapeHtml(version.createdAt)}</small><div>${escapeHtml(version.content)}</div>
+    ${(version.diffArtifacts || []).map((artifact) => `<div class="coach-evidence-diff"><small>${escapeHtml(artifact.kind)}</small>${renderDiffParts(artifact.parts || [])}</div>`).join('')}
+    ${(version.aiDecisions || []).map((decision) => `<small>${escapeHtml(decision.changeId)} · ${escapeHtml(decision.decision)}</small>`).join('')}</div>`).join('');
+  return `<details class="submission-trace"><summary>查看全部修改痕迹 · ${trace.length} 个版本</summary>${rows}</details>`;
+}
+
+function classCoachMarkup() {
+  const result = managementState.classCoachResult;
+  if (!result) return '';
+  const rules = (result.rules || []).map((rule) => `<article class="coach-rule"><strong>${escapeHtml(rule.title)}</strong>
+    <span>${rule.supportCount} 个案例</span><p>${escapeHtml(rule.instruction)}</p></article>`).join('');
+  return `<section class="management-panel class-coach-result"><div class="management-section-head"><h3>全班 AI 教练结果</h3>
+    <span>${result.summary?.traceCount || 0} 条 Diff</span></div>${rules || '<div class="empty-state">AI 未归纳出稳定规则。</div>'}</section>`;
 }
 
 function submissionsPane() {
-  return `<div class="management-account-layout submissions-layout"><section class="management-panel"><div class="management-section-head"><h3>学生 Prompt</h3>
-      <span>${managementState.submissions.prompts?.length || 0} 条</span></div><div class="submission-list">${submittedPromptRows()}</div></section>
-    <section class="management-panel"><div class="management-section-head"><h3>学生译文</h3>
-      <span>${managementState.submissions.translations?.length || 0} 条</span></div><div class="submission-list">${submittedTranslationRows()}</div></section></div>`;
+  const classButton = managementState.selectedClassId ? `<button class="button button-secondary" data-management-action="run-class-coach">生成全班 AI 教练</button>` : '';
+  const className = managementState.classDetail?.name || '尚未选择班级';
+  return `<div class="management-section-head submissions-coach-head"><div><h3>${escapeHtml(className)} · 学生提交</h3>
+    <span>选择项目查看座位图，再点击学生头像下钻到译文和 Diff</span></div>${classButton}</div>
+    ${classCoachMarkup()}<section class="management-panel"><div class="management-section-head"><h3>项目</h3></div>
+      ${submissionProjectCards()}</section><section class="management-panel"><div class="management-section-head"><h3>学生花名册</h3>
+      <span>${submissionStudents().length} 名学生</span></div>${submissionSeatMap()}</section>${selectedStudentSubmissions()}`;
 }
 
 function activePane() {
@@ -410,6 +529,38 @@ async function publishSubmittedPrompt(trigger) {
   await refreshManagement('学生 Prompt 已发布为项目 Prompt。', true);
 }
 
+function exportStudentProject(trigger) {
+  const student = submissionStudents().find((item) => item.id === trigger.dataset.userId);
+  const project = (managementState.classDetail?.projects || []).find(
+    (item) => item.id === trigger.dataset.projectId);
+  if (!student || !project) throw new Error('学生或项目信息已失效。');
+  const data = studentProjectSubmissions(student.id, project.id);
+  const artifact = { schema: 'translation-aiducator.student-project-submission.v1',
+    exportedAt: new Date().toISOString(), class: { id: managementState.classDetail.id,
+      name: managementState.classDetail.name }, student, project, ...data };
+  downloadSubmission(`${project.name}-${student.displayName}-提交.json`, artifact);
+}
+
+function downloadSubmission(filename, artifact) {
+  const safeName = filename.replace(/[<>:"/\\|?*]/g, '-');
+  const blob = new Blob([JSON.stringify(artifact, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement('a'), { href: url, download: safeName });
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast('学生项目提交已导出。');
+}
+
+async function runClassCoach() {
+  const classId = managementState.selectedClassId;
+  if (!classId) throw new Error('请先选择班级。');
+  managementState.classCoachResult = await apiRequest(`/api/classes/${encodeURIComponent(classId)}/prompt-coach`, {
+    method: 'POST', body: JSON.stringify({ requestId: `class-coach-${crypto.randomUUID()}` }),
+  });
+  renderManagement();
+  showToast('全班教练分析已完成');
+}
+
 async function withdrawParticipant(trigger) {
   const experimentId = managementState.selectedExperimentId;
   await apiRequest(`/api/experiments/${encodeURIComponent(experimentId)}/participants/${encodeURIComponent(trigger.dataset.userId)}`, { method: 'DELETE' });
@@ -425,7 +576,22 @@ async function handleManagementClick(event) {
   if (action === 'close-create-class') { managementState.classCreateOpen = false; return renderManagement(); }
   if (action === 'edit-class') { managementState.editingClass = managementState.classes.find((item) => item.id === trigger.dataset.classId); return renderManagement(); }
   if (action === 'close-edit-class') { managementState.editingClass = null; return renderManagement(); }
-  if (action === 'select-class') { managementState.selectedClassId = trigger.dataset.classId; return refreshManagement(); }
+  if (action === 'select-class') {
+    managementState.selectedClassId = trigger.dataset.classId;
+    managementState.selectedSubmissionProjectId = null;
+    managementState.selectedSubmissionStudentId = null;
+    return refreshManagement();
+  }
+  if (action === 'select-submission-project') {
+    managementState.selectedSubmissionProjectId = trigger.dataset.projectId;
+    managementState.selectedSubmissionStudentId = null;
+    return renderManagement();
+  }
+  if (action === 'select-submission-student') {
+    managementState.selectedSubmissionStudentId = managementState.selectedSubmissionStudentId === trigger.dataset.userId
+      ? null : trigger.dataset.userId;
+    return renderManagement();
+  }
   if (action === 'select-experiment') {
     managementState.selectedExperimentId = trigger.dataset.experimentId;
     return refreshManagement();
@@ -438,6 +604,8 @@ async function handleManagementClick(event) {
     if (action === 'dissolve-class') await dissolveClass(trigger);
     if (action === 'remove-assignment') await removeAssignment(trigger);
     if (action === 'publish-submitted-prompt') await publishSubmittedPrompt(trigger);
+    if (action === 'export-student-project') exportStudentProject(trigger);
+    if (action === 'run-class-coach') await runClassCoach();
     if (action === 'withdraw-participant') await withdrawParticipant(trigger);
   } catch (error) { showToast(`操作失败：${error.message}`); }
   finally { if (trigger.isConnected) trigger.disabled = false; }
@@ -457,6 +625,12 @@ async function handleManagementChange(event) {
         method: 'POST', body: JSON.stringify({ status: trigger.value }),
       });
       await refreshManagement('实验状态已更新。');
+    }
+    if (trigger.dataset.managementAction === 'class-ai-post-edit') {
+      await apiRequest(`/api/classes/${encodeURIComponent(managementState.selectedClassId)}/features`, {
+        method: 'PATCH', body: JSON.stringify({ aiPostEditEnabled: trigger.checked }),
+      });
+      await refreshManagement(trigger.checked ? '已允许学生使用 AI 译后编辑' : '已切换为仅允许人工编辑', true);
     }
   } catch (error) { showToast(`操作失败：${error.message}`); }
 }

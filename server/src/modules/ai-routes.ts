@@ -10,7 +10,7 @@ import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { cancelAiTranslation, executeAiTranslation, executeFullTranslation, testServerModelConnection,
   type AiExecutionInput, type FullTranslationInput } from './ai-execution.js';
-import { ensureProjectView } from './access.js';
+import { aiPostEditAllowed, ensureProjectView, ensureWorkspaceView } from './access.js';
 import { inspectPromptStructures } from './prompt-inspector.js';
 import { disableServerModel, listServerModelDirectory, listServerModels, saveServerModel, serverModelCapability,
   type ServerModelInput } from './server-models.js';
@@ -24,7 +24,11 @@ function registerModelManagementRoutes(app: FastifyInstance, context: AppContext
   app.get<{ Querystring: InspectQuery }>('/api/manage/prompt-structures',
     { preHandler: requireReadyAccount }, async (request) => {
       ensureProjectView(context, request.authUser!, request.query.projectId);
-      return inspectPromptStructures(context, request.query);
+      if (request.query.workspaceId) {
+        ensureWorkspaceView(context, request.authUser!, request.query.workspaceId);
+      }
+      const allowed = aiPostEditAllowed(context, request.authUser!, request.query.projectId);
+      return inspectPromptStructures(context, request.query, allowed, request.authUser!.id);
     });
   app.get('/api/manage/server-models', { preHandler: requireRoles('admin', 'teacher') }, async () => ({
     models: listServerModels(context),

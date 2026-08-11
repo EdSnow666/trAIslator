@@ -23,14 +23,15 @@ function operationCard(operation, index) {
 function renderInspector(data) {
   const root = document.querySelector('#modal-root');
   const layers = data.promptLayers;
+  const translationLayers = layers.translation || layers;
   const cards = data.operations.map(operationCard).join('');
   root.innerHTML = `<div class="modal-backdrop"><section class="modal modal-wide" role="dialog"
     aria-modal="true" aria-label="后台 Prompt 发送结构">
     <header class="modal-header"><div><div class="eyebrow">ADMIN PROMPT INSPECTOR</div>
       <h2>后台 Prompt 发送结构</h2></div><button class="icon-button" data-action="close-modal">×</button></header>
     <div class="modal-body"><p class="muted">以下为实际消息组装结构；不展示 API Key、登录 Token 和请求头。</p>
-      <div class="prompt-layer-summary"><strong>Overarching Prompt</strong><span>${escapeHtml(layers.overarching?.title || '未发布')}</span>
-      <strong>自定义 Prompt</strong><span>${escapeHtml(layers.custom?.title || '未使用')}</span></div>${cards}</div>
+      <div class="prompt-layer-summary"><strong>Overarching Prompt</strong><span>${escapeHtml(translationLayers.overarching?.title || '未发布')}</span>
+      <strong>自定义 Prompt</strong><span>${escapeHtml(translationLayers.custom?.title || '未使用')}</span></div>${cards}</div>
     <footer class="modal-footer"><button class="button button-ghost" data-action="close-modal">关闭</button></footer>
   </section></div>`;
 }

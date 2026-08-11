@@ -46,7 +46,8 @@ function openVersionDrawer(segmentId) {
   const project = store.getProject();
   const segment = store.getSegment(segmentId);
   const cards = versionCards(project, segment);
-  const hasDiff = segment.translations.some((item) => item.postEditText || item.aiPostEdit);
+  const hasDiff = segment.translations.some((item) => item.postEditText
+    || (project.aiPostEditAllowed !== false && item.aiPostEdit));
   const toggle = hasDiff ? drawerDiffToggle() : '';
   drawerRoot.innerHTML = `<div class="drawer-backdrop" data-action="close-drawer"><aside class="drawer" data-drawer-stop>
     <header class="drawer-header"><div><div class="eyebrow">SEGMENT LINEAGE</div><h2 style="margin:0;font-family:var(--serif)">句段全部译文版本</h2></div>
@@ -56,7 +57,10 @@ function openVersionDrawer(segmentId) {
 }
 
 function versionCards(project, segment) {
-  const versions = [...visibleTranslationVersions(segment)].sort((left, right) => {
+  const allowed = project.aiPostEditAllowed !== false;
+  const versions = [...visibleTranslationVersions(segment)]
+    .filter((item) => allowed || !isStandaloneAiEdit(item))
+    .map((item) => allowed ? item : withoutAiPostEditHistory(item)).sort((left, right) => {
     const currentOrder = Number(right.id === segment.currentTranslationId)
       - Number(left.id === segment.currentTranslationId);
     return currentOrder || segment.translations.indexOf(right) - segment.translations.indexOf(left);
@@ -69,6 +73,10 @@ function versionCards(project, segment) {
     return item.id === segment.currentTranslationId
       ? `${aiVersion}${regular}` : `${regular}${aiVersion}`;
   }).join('');
+}
+function withoutAiPostEditHistory(item) {
+  return { ...item, aiPostEdit: null, aiPostEditTrace: null,
+    serverBaselineKind: item.serverBaselineKind === 'ai_post_edit' ? 'ai_translation' : item.serverBaselineKind };
 }
 function drawerDiffToggle() {
   return '<button class="text-button" data-action="toggle-drawer-diffs" aria-pressed="false">隐藏全部 Diff</button>';
@@ -128,7 +136,8 @@ function versionSourceLabel(item, prompt) {
 
 function versionRevision(project, item) {
   if (isManualTranslation(item)) return '<span class="muted" style="font-size:9px">人工参考译文，不适用 AI → 人工 Diff</span>';
-  return item.postEditText ? versionDiff(project, item) : '<span class="muted" style="font-size:9px">尚未进行人工译后编辑</span>';
+  const empty = project.aiPostEditAllowed === false ? '尚未进行人工编辑' : '尚未进行人工译后编辑';
+  return item.postEditText ? versionDiff(project, item) : `<span class="muted" style="font-size:9px">${empty}</span>`;
 }
 
 function versionPromptSnapshot(item) {
@@ -188,8 +197,11 @@ function briefPendingNote(project) {
 function openBriefModal() {
   const project = store.getProject();
   const editable = !store.getState().serverMode || project.canManage;
+  const contextNote = project.aiPostEditAllowed === false
+    ? '查看当前任务书；翻译时会将它作为独立上下文层发送给模型。'
+    : '查看当前任务书；翻译与 AI 译后编辑时会将它作为独立上下文层发送给模型。';
   const body = `<div class="eyebrow">TRANSLATION BRIEF</div>
-    <p class="muted">查看当前任务书；翻译与 AI 译后编辑时会将它作为独立上下文层发送给模型。</p>
+    <p class="muted">${contextNote}</p>
     ${briefPendingNote(project)}<table class="brief-view-table"><tbody>${briefViewRows(project)}</tbody></table>`;
   const edit = editable ? '<button class="button button-primary" data-action="edit-project-brief">编辑任务书</button>' : '';
   const footer = `${briefGenerateButton(project)}${edit}<button class="button button-ghost" data-action="close-modal">关闭</button>`;
@@ -214,10 +226,19 @@ function briefLabel(key) {
 let promptLineageKind = 'translation';
 let showArchivedPrompts = false;
 
+function aiPostEditAvailable() {
+  return store.getProject().aiPostEditAllowed !== false;
+}
+
 function openPromptLineageModal(options = {}) {
   const project = store.getProject();
   if (options.dataset?.promptKind) options = { kind: options.dataset.promptKind };
+  if (!aiPostEditAvailable() && options.kind === 'post_edit') {
+    showToast('当前班级仅允许人工编辑');
+    options = { ...options, kind: 'translation' };
+  }
   if (options.kind) promptLineageKind = options.kind;
+  if (!aiPostEditAvailable()) promptLineageKind = 'translation';
   if (typeof options.showArchived === 'boolean') showArchivedPrompts = options.showArchived;
   const activeId = promptLineageKind === 'post_edit'
     ? project.activePostEditPromptId : project.activePromptId;
@@ -225,11 +246,12 @@ function openPromptLineageModal(options = {}) {
     && (showArchivedPrompts ? prompt.isArchived : !prompt.isArchived))
     .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId) || b.version - a.version);
   const cards = items.map((prompt) => promptLineageCard(project, prompt)).join('');
-  const body = `<div class="prompt-lineage-switch"><div class="prompt-face-switch is-${promptLineageKind}">
+  const kindSwitch = aiPostEditAvailable() ? `<div class="prompt-face-switch is-${promptLineageKind}">
     <button class="${promptLineageKind === 'translation' ? 'is-active' : ''}"
       data-action="switch-prompt-lineage" data-prompt-kind="translation">翻译 Prompt</button>
     <button class="${promptLineageKind === 'post_edit' ? 'is-active' : ''}"
-      data-action="switch-prompt-lineage" data-prompt-kind="post_edit">译后编辑 Prompt</button></div>
+      data-action="switch-prompt-lineage" data-prompt-kind="post_edit">译后编辑 Prompt</button></div>` : '';
+  const body = `<div class="prompt-lineage-switch">${kindSwitch}
     <div class="prompt-lineage-tools"><button class="button button-primary prompt-lineage-tool" data-action="open-new-prompt-version"
       data-prompt-kind="${promptLineageKind}">新建</button>
     <button class="button button-ghost prompt-lineage-tool ${showArchivedPrompts ? 'is-active' : ''}"
@@ -241,6 +263,9 @@ function openPromptLineageModal(options = {}) {
 }
 
 function switchPromptLineage(trigger) {
+  if (!aiPostEditAvailable() && trigger.dataset.promptKind === 'post_edit') {
+    return showToast('当前班级仅允许人工编辑');
+  }
   openPromptLineageModal({ kind: trigger.dataset.promptKind });
 }
 
@@ -370,6 +395,7 @@ function openPromptModal(content = '', options = {}) {
   const title = escapeHtml(options.title || '课堂共创优化');
   const note = escapeHtml(options.note || '根据课堂讨论调整翻译策略');
   const kind = options.promptKind || promptLineageKind || 'translation';
+  if (kind === 'post_edit' && !aiPostEditAvailable()) return showToast('当前班级仅允许人工编辑');
   const selectedId = options.basePromptId || (kind === 'post_edit'
     ? project.activePostEditPromptId : project.activePromptId);
   const body = `<input id="prompt-kind" type="hidden" value="${kind}"><div class="form-group"><label for="prompt-title">版本名称</label><input id="prompt-title" class="field field-full" value="${title}"></div>
@@ -398,6 +424,9 @@ function openPromptArchiveConfirm(prompt) {
 }
 
 function openNewPromptVersion(trigger) {
+  if (!aiPostEditAvailable() && (trigger.dataset.promptKind || promptLineageKind) === 'post_edit') {
+    return showToast('当前班级仅允许人工编辑');
+  }
   openPromptModal('', { promptKind: trigger.dataset.promptKind || promptLineageKind });
 }
 
@@ -416,6 +445,7 @@ function openPairImportModal(trigger) {
 }
 
 function openPostEditTask() {
+  if (!aiPostEditAvailable()) return showToast('当前班级仅允许人工编辑');
   const project = store.getProject();
   const prompt = project.prompts.find((item) => item.id === project.activePostEditPromptId);
   const body = `<p class="muted">这里使用独立的译后编辑 Prompt，不会改动翻译 Prompt 谱系。</p>
@@ -439,6 +469,51 @@ function openTranslationProgress(total, title = '全文翻译') {
 function updateTranslationProgress(completed, total, label = '') {
   const field = modalRoot.querySelector('[data-translation-progress]');
   if (field) field.textContent = `${label || '正在生成'} ${completed} / ${total}`;
+}
+
+let promptCoachDefault = '';
+
+function promptCoachProjectOption(project, currentId) {
+  const checked = project.id === currentId ? ' checked' : '';
+  return `<label class="prompt-submit-option"><input type="checkbox" data-coach-project
+    value="${escapeHtml(project.id)}"${checked}><span><strong>${escapeHtml(project.name)}</strong>
+    <small>${escapeHtml(project.direction)} · 汇总当前账号已确认的人工修改</small></span></label>`;
+}
+
+function openPromptCoachSetup(projects, settings, currentId) {
+  promptCoachDefault = settings.defaultPrompt;
+  const options = projects.map((project) => promptCoachProjectOption(project, currentId)).join('');
+  const source = settings.customPrompt ? '当前使用自定义 Prompt' : '当前使用系统默认 Prompt';
+  const body = `<p class="muted">选择 1 至 20 个项目。系统只读取当前账号在这些项目中已确认的 AI 原译 → 人工修改 Diff。</p>
+    <div class="form-group"><label>项目范围</label><div class="prompt-coach-projects">${options}</div></div>
+    <div class="form-group"><label for="prompt-coach-instruction">AI 教练 Prompt</label>
+      <textarea id="prompt-coach-instruction" class="field field-full prompt-long-editor">${escapeHtml(settings.effectivePrompt)}</textarea>
+      <p class="muted" data-coach-prompt-source>${source}；未修改时继续使用默认值。</p></div>`;
+  const footer = '<button class="button button-ghost" data-action="reset-prompt-coach-prompt">恢复默认</button>'
+    + '<button class="button button-ghost" data-action="close-modal">取消</button>'
+    + '<button class="button button-primary" data-action="confirm-run-prompt-coach">运行教练</button>';
+  modal('AI Prompt 教练 · 项目与 Prompt', body, footer);
+}
+
+function resetPromptCoachPrompt() {
+  const field = modalRoot.querySelector('#prompt-coach-instruction');
+  if (field) field.value = promptCoachDefault;
+  const source = modalRoot.querySelector('[data-coach-prompt-source]');
+  if (source) source.textContent = '已恢复系统默认 Prompt；运行后不会保留自定义版本。';
+}
+
+function openPromptCoachProgress(projectCount = 1) {
+  const body = `<div class="project-generation-status is-visible">
+    <span class="generation-spinner" aria-hidden="true"></span>
+    <strong data-prompt-coach-progress>正在保存并确认修改</strong></div>
+    <p class="muted">正在汇总 ${projectCount} 个项目。取消后不会写入本次分析结果。</p>`;
+  modal('AI Prompt 教练运行中', body,
+    '<button class="button button-secondary" data-action="cancel-prompt-coach">取消运行</button>');
+}
+
+function updatePromptCoachProgress(label) {
+  const field = modalRoot.querySelector('[data-prompt-coach-progress]');
+  if (field) field.textContent = label;
 }
 function openImportModal() {
   const accept = '.txt,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -614,6 +689,10 @@ export const dialogs = {
   openPostEditTask,
   openTranslationProgress,
   updateTranslationProgress,
+  openPromptCoachProgress,
+  updatePromptCoachProgress,
+  openPromptCoachSetup,
+  resetPromptCoachPrompt,
   openImportModal,
   updateProjectSetupVisibility,
   copySelectedResource,

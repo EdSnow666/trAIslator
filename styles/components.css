@@ -178,6 +178,7 @@
   font-family: var(--serif);
   font-size: 15px;
   line-height: 1.68;
+  user-select: text;
 }
 
 .target-editor {

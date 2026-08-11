@@ -28,6 +28,8 @@ import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
+import { cancelPromptCoach, confirmRunPromptCoach, resetPromptCoachPrompt,
+  runPromptCoach } from './ui/prompt-coach-actions.js';
 import { openPairImport, submitPairImport } from './ui/resource-import.js';
 import { runPostEditTask } from './ui/post-edit-task.js';
 import { acceptCurrentAiPostEdit, beginAiPostEdit, decideAiPostEdit, openAiChange,
@@ -69,6 +71,10 @@ const actionHandlers = {
   'save-term': saveTerm,
   'apply-coach-rules': applyCoachRules,
   'download-coach-json': downloadPromptCoachJson,
+  'run-prompt-coach': runPromptCoach,
+  'confirm-run-prompt-coach': confirmRunPromptCoach,
+  'reset-prompt-coach-prompt': resetPromptCoachPrompt,
+  'cancel-prompt-coach': cancelPromptCoach,
   'download-post-edit-json': downloadPostEditJson,
   'ai-post-edit-current': runAiPostEdit,
   'toggle-ai-post-edit': toggleAiPostEdit,
@@ -97,6 +103,20 @@ const actionHandlers = {
   'reset-layout': resetLayout, 'switch-left-prompt-kind': (trigger) => { trigger.closest('#prompt-kind-switch').dataset.kind = trigger.dataset.promptKind; renderApp(); }, 'open-new-prompt-version': dialogs.openNewPromptVersion, 'bulk-generate-current': generateCurrent, 'bulk-generate-all': generateAllTranslations, 'bulk-post-edit-all': generateAllPostEdits, 'bulk-confirm-all': confirmAllTranslations, 'bulk-submit-all': submitAllTranslations, 'submit-current-translation': submitCurrentTranslation,
 };
 
+const AI_POST_EDIT_ACTIONS = new Set([
+  'ai-post-edit-current', 'toggle-ai-post-edit', 'open-ai-change', 'decide-ai-post-edit',
+  'edit-ai-post-edit', 'discard-ai-post-edit', 'open-post-edit-task', 'run-post-edit-task',
+  'bulk-post-edit-all', 'download-post-edit-json',
+]);
+
+function aiPostEditActionBlocked(trigger) {
+  if (store.getProject().aiPostEditAllowed !== false) return false;
+  if (AI_POST_EDIT_ACTIONS.has(trigger.dataset.action)) return true;
+  const kindAction = ['switch-left-prompt-kind', 'switch-prompt-lineage',
+    'open-prompt-lineage', 'open-new-prompt-version'].includes(trigger.dataset.action);
+  return kindAction && trigger.dataset.promptKind === 'post_edit';
+}
+
 function bindStaticEvents() {
   document.addEventListener('click', handleActionClick);
   document.addEventListener('click', handleMenuClick);
@@ -121,10 +141,13 @@ function bindStaticEvents() {
   document.querySelector('.segment-filter').addEventListener('click', changeFilter);
   document.querySelector('#modal-root').addEventListener('change', handleModalChange);
   window.addEventListener('server-projects-changed', reloadServerProjects);
+  window.addEventListener('focus', refreshStudentPermissions);
+  document.addEventListener('visibilitychange', refreshVisibleStudentPermissions);
 }
 
 function handleActionKeydown(event) {
   if (event.ctrlKey || event.metaKey) return;
+  if (store.getProject().aiPostEditAllowed === false) return;
   const change = event.target.closest('.ai-change-token');
   if (change && ['Enter', ' '].includes(event.key)) {
     event.preventDefault();
@@ -139,6 +162,7 @@ function handleActionKeydown(event) {
 function handleActionClick(event) {
   const trigger = event.target.closest('[data-action]');
   if (!trigger || isBackdropInteriorClick(trigger, event)) return;
+  if (aiPostEditActionBlocked(trigger)) return showToast('当前班级仅允许人工编辑');
   const handler = actionHandlers[trigger.dataset.action];
   if (!handler) return;
   handler(trigger, event);
@@ -193,6 +217,8 @@ function isBackdropInteriorClick(trigger) {
 }
 
 function selectSegment(trigger) {
+  const selectedText = window.getSelection()?.toString().trim();
+  if (trigger.closest('.source-cell') && selectedText) return;
   store.selectSegment(trigger.dataset.segmentId);
 }
 
@@ -353,14 +379,15 @@ function openPromptFromActive() {
 
 function applyCoachRules() {
   if (promptEditingBlocked()) return showToast('系统模板为只读；请先克隆为教学项目。');
-  const analysis = analyzePromptCoach(store.getProject());
+  const analysis = store.getProject().promptCoachResult || analyzePromptCoach(store.getProject());
   const selected = new Set([...document.querySelectorAll('[data-coach-rule]:checked')]
     .map((item) => item.dataset.coachRule));
   const rules = analysis.rules.filter((rule) => selected.has(rule.id));
   if (!rules.length) return showToast('请至少选择一条结构规则。');
   const active = store.getPrompt(store.getProject().activePromptId);
   const content = `${active.content.trim()}\n\n${buildPromptRuleAppendix(rules)}`;
-  const note = `AI Prompt 教练：基于 ${analysis.totalCount} 条 T2 的句子结构分析`;
+  const traceCount = analysis.summary?.traceCount ?? analysis.totalCount ?? 0;
+  const note = `AI Prompt 教练：基于 ${traceCount} 条句子结构 Diff 分析`;
   dialogs.openPromptModal(content, { title: 'T2 句法结构优化', note });
 }
 
@@ -434,6 +461,22 @@ async function reloadServerProjects() {
   try { store.setServerProjects(await loadServerProjects()); await refreshResourceCatalog(); }
   catch (error) { showToast(`项目列表刷新失败：${error.message}`); }
 }
+let lastPermissionRefresh = 0;
+let permissionRefreshActive = false;
+
+async function refreshStudentPermissions() {
+  const state = store.getState();
+  if (!state.serverMode || state.role !== 'student' || permissionRefreshActive) return;
+  if (Date.now() - lastPermissionRefresh < 2000) return;
+  permissionRefreshActive = true;
+  lastPermissionRefresh = Date.now();
+  try { await reloadServerProjects(); }
+  finally { permissionRefreshActive = false; }
+}
+
+function refreshVisibleStudentPermissions() {
+  if (document.visibilityState === 'visible') refreshStudentPermissions();
+}
 async function refreshCurrentServerProject() {
   const project = store.getProject();
   const snapshot = await refreshServerProject(project);
@@ -458,6 +501,7 @@ async function setCurrentVersion(trigger) {
 
 async function discardAiPostEdit(trigger) {
   const project = store.getProject();
+  if (project.aiPostEditAllowed === false) return showToast('当前班级仅允许人工编辑');
   const segment = store.getSegment(trigger.dataset.segmentId);
   const translation = segment?.translations.find((item) => item.id === trigger.dataset.translationId);
   if (store.getState().serverMode && translation?.serverVersionKind === 'ai_post_edit') {
@@ -670,7 +714,7 @@ function downloadJson() {
 }
 function downloadPromptCoachJson() {
   const project = store.getProject();
-  const artifact = buildPromptCoachArtifact(project);
+  const artifact = project.promptCoachResult || buildPromptCoachArtifact(project);
   const safeName = project.name.replace(/[<>:"/\\|?*]/g, '-');
   const filename = `${safeName}-Prompt-Coach-Structure.json`;
   downloadBlob(filename, JSON.stringify(artifact, null, 2), 'application/json');
@@ -703,7 +747,11 @@ function downloadBlob(filename, content, type) {
 }
 function handleShortcut(event) {
   if (!(event.ctrlKey || event.metaKey)) return;
-  if (event.key === 'Enter') return handleTranslationConfirmation(event) || acceptCurrentAiPostEdit(event);
+  if (event.key === 'Enter') {
+    const handled = handleTranslationConfirmation(event);
+    if (handled || store.getProject().aiPostEditAllowed === false) return handled;
+    return acceptCurrentAiPostEdit(event);
+  }
   if (event.key.toLowerCase() !== 's') return;
   const segment = store.getSegment();
   const trigger = document.querySelector(`[data-action="save-segment"][data-segment-id="${segment?.id}"]`);

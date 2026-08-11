@@ -292,6 +292,37 @@ export async function runServerFullTranslation(project, promptId, options = {}) 
       kind: options.kind || 'ai_translation', requestId: runRequestId }), signal: options.signal,
   });
 }
+export async function runServerPromptCoach(project, options = {}) {
+  if (!project.workspaceId) throw new Error('当前项目没有可分析的个人工作空间。');
+  return apiRequest(`/api/workspaces/${project.workspaceId}/prompt-coach`, {
+    method: 'POST', body: JSON.stringify({ requestId: options.requestId
+      || `prompt-coach-${crypto.randomUUID()}`, modelConfigId: options.modelConfigId }),
+    signal: options.signal,
+  });
+}
+export async function loadPromptCoachSettings() {
+  return apiRequest('/api/prompt-coach/settings');
+}
+export async function runServerProjectPromptCoach(projectIds, options = {}) {
+  return apiRequest('/api/prompt-coach/projects', {
+    method: 'POST', body: JSON.stringify({ projectIds, requestId: options.requestId
+      || `prompt-coach-projects-${crypto.randomUUID()}`, modelConfigId: options.modelConfigId,
+    coachPrompt: options.coachPrompt }), signal: options.signal,
+  });
+}
+export async function cancelServerProjectPromptCoach(runRequestId) {
+  const result = await apiRequest('/api/prompt-coach/projects/cancel', {
+    method: 'POST', body: JSON.stringify({ requestId: runRequestId }),
+  });
+  return Boolean(result.cancelled);
+}
+export async function cancelServerPromptCoach(project, runRequestId) {
+  if (!project.workspaceId) return false;
+  const result = await apiRequest(`/api/workspaces/${project.workspaceId}/prompt-coach/cancel`, {
+    method: 'POST', body: JSON.stringify({ requestId: runRequestId }),
+  });
+  return Boolean(result.cancelled);
+}
 export async function cancelServerAiTranslation(project, runRequestId) {
   if (!project.workspaceId) return false;
   const result = await apiRequest(`/api/workspaces/${project.workspaceId}/ai/cancel`, {

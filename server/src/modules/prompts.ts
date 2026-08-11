@@ -9,7 +9,8 @@ import type { AuthUser } from '../auth/types.js';
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { jsonText, newId, nowIso, sha256 } from '../shared.js';
-import { ensureProjectManage, ensureProjectView, ensureWorkspaceOwner } from './access.js';
+import { aiPostEditAllowed, ensureAiPostEditAllowed, ensureProjectManage,
+  ensureProjectView, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
 
 export type PromptKind = 'translation' | 'post_edit';
@@ -120,6 +121,9 @@ function validatedParent(context: AppContext, user: AuthUser, projectId: string,
 }
 export function createPromptVersion(context: AppContext, user: AuthUser, projectId: string, input: PromptInput): string {
   ensurePromptCreateAccess(context, user, projectId);
+  if (promptKind(input) === 'post_edit' && !aiPostEditAllowed(context, user, projectId)) {
+    throw new AppError(403, 'AI_POST_EDIT_DISABLED_FOR_CLASS', '教师已关闭当前班级的 AI 译后编辑功能。');
+  }
   const existing = existingPromptRequest(context, user.id, input.requestId);
   const parentVersionId = validatedParent(context, user, projectId, input);
   if (existing) return existing;
@@ -139,12 +143,14 @@ export function createPromptVersion(context: AppContext, user: AuthUser, project
 }
 
 export function submitPrompt(context: AppContext, user: AuthUser, promptVersionId: string): string {
-  const row = context.db.prepare(`SELECT pl.project_id, pl.owner_user_id FROM prompt_versions pv
+  const row = context.db.prepare(`SELECT pl.project_id, pl.owner_user_id,
+      pl.prompt_kind AS promptKind FROM prompt_versions pv
     JOIN prompt_lineages pl ON pl.id = pv.lineage_id
     LEFT JOIN prompt_version_archives pva ON pva.prompt_version_id = pv.id
     WHERE pv.id = ? AND pva.prompt_version_id IS NULL`).get(promptVersionId) as
-    { project_id: string; owner_user_id: string } | undefined;
+    { project_id: string; owner_user_id: string; promptKind: PromptKind } | undefined;
   if (!row || row.owner_user_id !== user.id) throw new AppError(403, 'PROMPT_SUBMIT_FORBIDDEN', '只能提交自己的 Prompt。');
+  if (row.promptKind === 'post_edit') ensureAiPostEditAllowed(context, user, row.project_id);
   const existing = context.db.prepare(`SELECT id FROM prompt_submissions
     WHERE prompt_version_id = ? AND submitted_by = ?`).get(promptVersionId, user.id) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -198,15 +204,17 @@ export function unpublishPrompt(context: AppContext, user: AuthUser, projectId: 
 }
 
 function promptArchiveRow(context: AppContext, promptVersionId: string) {
-  return context.db.prepare(`SELECT pl.project_id AS projectId, pl.owner_user_id AS ownerUserId
+  return context.db.prepare(`SELECT pl.project_id AS projectId, pl.owner_user_id AS ownerUserId,
+      pl.prompt_kind AS promptKind
     FROM prompt_versions pv JOIN prompt_lineages pl ON pl.id = pv.lineage_id WHERE pv.id = ?`)
-    .get(promptVersionId) as { projectId: string; ownerUserId: string | null } | undefined;
+    .get(promptVersionId) as { projectId: string; ownerUserId: string | null; promptKind: PromptKind } | undefined;
 }
 
 export function archivePromptVersion(context: AppContext, user: AuthUser,
   promptVersionId: string): void {
   const row = promptArchiveRow(context, promptVersionId);
   if (!row) throw new AppError(404, 'PROMPT_NOT_FOUND', 'Prompt 版本不存在。');
+  if (row.promptKind === 'post_edit') ensureAiPostEditAllowed(context, user, row.projectId);
   if (row.ownerUserId !== user.id) ensureProjectManage(context, user, row.projectId);
   const published = context.db.prepare(`SELECT 1 FROM project_prompt_publications
     WHERE prompt_version_id = ? AND retired_at IS NULL`).get(promptVersionId);
@@ -239,6 +247,7 @@ export function restorePromptVersion(context: AppContext, user: AuthUser,
   promptVersionId: string): void {
   const row = promptArchiveRow(context, promptVersionId);
   if (!row) throw new AppError(404, 'PROMPT_NOT_FOUND', 'Prompt 版本不存在。');
+  if (row.promptKind === 'post_edit') ensureAiPostEditAllowed(context, user, row.projectId);
   if (row.ownerUserId !== user.id) ensureProjectManage(context, user, row.projectId);
   const result = context.db.prepare('DELETE FROM prompt_version_archives WHERE prompt_version_id = ?')
     .run(promptVersionId);
@@ -253,6 +262,9 @@ export function selectWorkspacePrompt(context: AppContext, user: AuthUser, works
   const workspace = context.db.prepare(`SELECT project_id FROM project_workspaces
     WHERE id = ? AND deleted_at IS NULL`).get(workspaceId) as { project_id: string } | undefined;
   if (!workspace) throw new AppError(404, 'WORKSPACE_NOT_FOUND', '工作空间不存在。');
+  if (kind === 'post_edit' && !aiPostEditAllowed(context, user, workspace.project_id)) {
+    throw new AppError(403, 'AI_POST_EDIT_DISABLED_FOR_CLASS', '教师已关闭当前班级的 AI 译后编辑功能。');
+  }
   const visible = listVisiblePrompts(context, user, workspace.project_id) as Array<{ id: string; archivedAt?: string; promptKind: PromptKind }>;
   const localPrompt = visible.some((prompt) => prompt.id === promptVersionId
     && prompt.promptKind === kind && !prompt.archivedAt)
@@ -273,7 +285,7 @@ export function listVisiblePrompts(context: AppContext, user: AuthUser, projectI
   const historyViewer = canViewPublishedHistory(context, user, projectId) ? 1 : 0;
   const templateViewer = user.roles.some((role) => role === 'admin' || role === 'teacher')
     && Boolean(context.db.prepare("SELECT 1 FROM projects WHERE id = ? AND project_kind = 'system_template'").get(projectId));
-  return context.db.prepare(`SELECT pv.*, pl.owner_user_id AS ownerUserId,
+  const rows = context.db.prepare(`SELECT pv.*, pl.owner_user_id AS ownerUserId,
       pl.prompt_kind AS promptKind,
       ps.status AS submissionStatus, ppp.published_at AS publishedAt,
       pva.archived_at AS archivedAt, parent.title AS parentTitle,
@@ -288,5 +300,8 @@ export function listVisiblePrompts(context: AppContext, user: AuthUser, projectI
     WHERE pl.project_id = ? AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR ? = 1 OR
       (? = 1 AND EXISTS (SELECT 1 FROM project_prompt_publications history
         WHERE history.prompt_version_id = pv.id)))
-    ORDER BY pv.created_at`).all(projectId, user.id, templateViewer ? 1 : 0, historyViewer);
+    ORDER BY pv.created_at`).all(projectId, user.id, templateViewer ? 1 : 0, historyViewer) as
+    Array<{ promptKind: PromptKind }>;
+  return aiPostEditAllowed(context, user, projectId)
+    ? rows : rows.filter((prompt) => prompt.promptKind !== 'post_edit');
 }

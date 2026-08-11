@@ -488,6 +488,121 @@
   line-height: 1.55;
   white-space: pre-wrap;
 }
+.management-feature-row,
+.submissions-coach-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.management-feature-row small,
+.submissions-coach-head span { color: var(--ink-soft); display: block; font-size: 9px; }
+.management-switch input { position: absolute; opacity: 0; }
+.management-switch span {
+  background: #d7dce3;
+  border-radius: 999px;
+  cursor: pointer;
+  display: block;
+  height: 22px;
+  position: relative;
+  transition: background .16s ease;
+  width: 40px;
+}
+.management-switch span::after {
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 25%);
+  content: '';
+  height: 16px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform .16s ease;
+  width: 16px;
+}
+.management-switch input:checked + span { background: #3975bc; }
+.management-switch input:checked + span::after { transform: translateX(18px); }
+.submission-trace { margin-top: 8px; }
+.submission-trace > summary { color: var(--navy); font-weight: 700; }
+.submission-trace-version { border-top: 1px solid var(--line); display: grid; gap: 5px; padding: 9px 0; }
+.submission-trace-version > div { font-family: var(--serif); line-height: 1.5; }
+
+.submission-project-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.submission-project-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  text-align: left;
+}
+
+.submission-project-card.is-active {
+  background: var(--navy-soft);
+  border-color: var(--navy);
+}
+
+.submission-project-card small,
+.student-seat small { color: var(--ink-soft); }
+
+.submission-seat-map {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+
+.student-seat {
+  align-items: center;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  min-height: 126px;
+  padding: 12px 8px;
+}
+
+.student-seat.submitted { background: #edf8f3; border-color: #82b8a1; }
+.student-seat.missing { background: #faf4f1; border-color: #d8c9c1; }
+.student-seat.is-active { box-shadow: 0 0 0 3px rgba(35, 61, 91, .16); }
+
+.student-avatar {
+  align-items: center;
+  background: var(--navy);
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  font-weight: 800;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+
+.student-project-submission {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.student-project-submission > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+
+.student-project-actions { display: flex; justify-content: flex-end; padding: 10px 0; }
+.class-coach-result { margin-bottom: 14px; }
+.class-coach-result .coach-rule { margin-top: 8px; }
 .management-class-card.class-tone-0 { background: #eef5ff; }
 .management-class-card.class-tone-1 { background: #f4f1ff; }
 .management-class-card.class-tone-2 { background: #eef8f2; }

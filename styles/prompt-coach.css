@@ -112,3 +112,14 @@
 .coach-footnote {
   margin: 9px 0 0;
 }
+.prompt-coach-projects {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.prompt-long-editor {
+  min-height: 180px;
+  resize: vertical;
+}

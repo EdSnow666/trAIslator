@@ -8,7 +8,7 @@
 import type { AuthUser } from '../auth/types.js';
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
-import { ensureProjectView, ensureWorkspaceView } from './access.js';
+import { aiPostEditAllowed, ensureProjectView, ensureWorkspaceView } from './access.js';
 import { currentProjectBrief } from './project-resources.js';
 import { listVisiblePrompts } from './prompts.js';
 import { latestVersionDiff } from './translation-diffs.js';
@@ -275,7 +275,9 @@ function activePromptId(context: AppContext, projectId: string, prompts: PromptR
     WHERE project_id = ? AND prompt_kind = ? AND retired_at IS NULL ORDER BY published_at DESC LIMIT 1`)
     .get(projectId, kind) as { id: string } | undefined;
   const available = prompts.filter((prompt) => prompt.promptKind === kind && !prompt.archivedAt);
-  return published?.id || available[available.length - 1]?.id || null;
+  const visiblePublished = published?.id && available.some((prompt) => prompt.id === published.id)
+    ? published.id : null;
+  return visiblePublished || available[available.length - 1]?.id || null;
 }
 
 function projectResources(context: AppContext, projectId: string) {
@@ -331,5 +333,6 @@ export function buildProjectSnapshot(context: AppContext, user: AuthUser,
     workspaceId: workspaceId || null,
     editable: Boolean(workspaceId),
     canManage: canManageProject(context, user, projectId),
+    aiPostEditAllowed: aiPostEditAllowed(context, user, projectId),
   };
 }

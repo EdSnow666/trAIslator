@@ -1,12 +1,13 @@
 /**
  * 职责: 为所有账户还原逐句、全文 JSON、译后编辑及资源生成功能的完整 Prompt 消息
- * 依赖内部: ../context.ts, ./prompt-structures.ts
+ * 依赖内部: ../context.ts, ./prompt-coach.ts, ./prompt-structures.ts
  * 依赖外部: 无
  * 暴露: inspectPromptStructures
  */
 
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
+import { workspacePromptCoachMessages } from './prompt-coach.js';
 import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, projectMessages,
   fullTranslationMessages, promptGenerationPayload, translationMessages } from './prompt-structures.js';
 
@@ -91,32 +92,42 @@ function fullTranslationPayload(context: AppContext, project: ProjectRow, input:
     ...resources(context, project.id) };
 }
 
-export function inspectPromptStructures(context: AppContext, input: InspectInput): unknown {
+function postEditInspectorData(context: AppContext, project: ProjectRow, input: InspectInput,
+  samples: Array<{ id: string; source: string }>, segment: { id: string; source: string }, included: boolean) {
+  if (!included) return { layers: {}, operations: [] };
+  const published = publishedPrompt(context, project.id, 'post_edit');
+  const active = activePrompt(context, project.id, 'post_edit', input.workspaceId);
+  const payload = translationPayload(context, project, input, segment, published, active);
+  return { layers: { postEdit: { overarching: published,
+      custom: active?.id === published?.id ? null : active } }, operations: [
+    { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', payload) },
+    { id: 'full_ai_post_edit', label: '全文 AI 译后编辑 JSON', messages: fullTranslationMessages(
+      fullTranslationPayload(context, project, input, samples, published, active, true), 'ai_post_edit') },
+  ] };
+}
+
+export function inspectPromptStructures(context: AppContext, input: InspectInput,
+  includeAiPostEdit = true, userId?: string): unknown {
   const project = projectRow(context, input.projectId);
   const samples = sourceRows(context, project.id);
   const segment = samples.find((item) => item.id === input.segmentId) || samples[0];
   if (!segment) throw new AppError(404, 'PROJECT_SOURCE_EMPTY', '项目没有可检查的原文句段。');
   const translationPublished = publishedPrompt(context, project.id, 'translation');
   const translationActive = activePrompt(context, project.id, 'translation', input.workspaceId);
-  const postEditPublished = publishedPrompt(context, project.id, 'post_edit');
-  const postEditActive = activePrompt(context, project.id, 'post_edit', input.workspaceId);
   const translationPayloadData = translationPayload(context, project, input, segment,
     translationPublished, translationActive);
-  const postEditPayload = translationPayload(context, project, input, segment,
-    postEditPublished, postEditActive);
   const sampleText = samples.slice(0, 10).map((item) => item.source);
+  const postEdit = postEditInspectorData(context, project, input, samples, segment, includeAiPostEdit);
+  const coachMessages = workspacePromptCoachMessages(context, input.workspaceId, userId);
   return { project, promptLayers: { translation: { overarching: translationPublished,
       custom: translationActive?.id === translationPublished?.id ? null : translationActive },
-    postEdit: { overarching: postEditPublished,
-      custom: postEditActive?.id === postEditPublished?.id ? null : postEditActive } },
+    ...postEdit.layers },
     operations: [
       { id: 'translation', label: '翻译', messages: translationMessages('ai_translation', translationPayloadData) },
       { id: 'full_translation', label: '全文翻译 JSON', messages: fullTranslationMessages(
         fullTranslationPayload(context, project, input, samples, translationPublished, translationActive)) },
-      { id: 'ai_post_edit', label: 'AI 译后编辑', messages: translationMessages('ai_post_edit', postEditPayload) },
-      { id: 'full_ai_post_edit', label: '全文 AI 译后编辑 JSON', messages: fullTranslationMessages(
-        fullTranslationPayload(context, project, input, samples, postEditPublished, postEditActive, true),
-        'ai_post_edit') },
+      ...postEdit.operations,
+      { id: 'prompt_coach', label: 'AI Prompt 教练', messages: coachMessages },
       { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
       { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,
         promptGenerationPayload(brief(context, project.id), sampleText)) },

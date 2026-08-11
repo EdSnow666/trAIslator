@@ -17,10 +17,14 @@ import { initializeAdmin } from '../src/ops/admin.js';
 import { runMigrationDeployment } from '../src/ops/deploy.js';
 import { seedDemoTemplates } from '../src/seed/demo-templates.js';
 import { exerciseFullPostEdit, exerciseFullTranslation, exerciseInvalidFullTranslation, exerciseRealAiExecution,
-  startMockModel } from './ai-execution-test-helpers.js';
+  exerciseClassPostEditPolicy, exercisePromptCoach, startMockModel } from './ai-execution-test-helpers.js';
+import { exerciseMigrationSafety, expireSessionsAndReadAdminHash,
+  verifySessionLifetime } from './migration-safety-test-helpers.js';
 interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
-interface ProjectScenario { projectId: string; workspaceId: string; segmentId: string; promptId: string }
+interface ProjectScenario {
+  projectId: string; classId: string; workspaceId: string; segmentId: string; promptId: string;
+}
 
 async function login(app: FastifyInstance, username: string, password: string): Promise<Session> {
   const response = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username, password } });
@@ -258,6 +262,13 @@ function verifyDatabaseState(databasePath: string, projectId: string): void {
     { status: string; modelConfigId: string; attempts: number };
   assert.deepEqual({ status: realRun.status, configured: Boolean(realRun.modelConfigId), attempts: realRun.attempts },
     { status: 'succeeded', configured: true, attempts: 1 });
+  const a36Recovery = db.prepare(`SELECT COUNT(DISTINCT version.id) AS versions,
+      COUNT(DISTINCT artifact.id) AS diffs FROM translation_versions version
+    LEFT JOIN translation_diff_artifacts artifact ON artifact.to_version_id = version.id
+      AND artifact.diff_kind = 'machine_to_human'
+    WHERE version.project_id = 'demo-a36-violence-against-children'
+      AND version.version_kind = 'human_post_edit'`).get() as { versions: number; diffs: number };
+  assert.deepEqual(a36Recovery, { versions: 10, diffs: 10 });
   assert.deepEqual(db.pragma('integrity_check'), [{ integrity_check: 'ok' }]);
   assert.equal((db.pragma('foreign_key_check') as unknown[]).length, 0);
   db.close();
@@ -688,69 +699,15 @@ async function runProjectScenario(app: FastifyInstance, sessions: TestSessions):
     segmentId, ids.humanId, base.id, promptId);
   await exerciseProjectSnapshot(app, sessions.student.cookie, setup.created.projectId,
     setup.workspaceId, segmentId, ids);
-  return { projectId: setup.created.projectId, workspaceId: setup.workspaceId, segmentId, promptId };
-}
-function verifySessionLifetime(databasePath: string): void {
-  const db = openDatabase(databasePath);
-  try {
-    const rows = db.prepare(`SELECT created_at, expires_at FROM sessions
-      WHERE revoked_at IS NULL`).all() as Array<{ created_at: string; expires_at: string }>;
-    assert.ok(rows.length > 0);
-    for (const row of rows) {
-      assert.equal(Date.parse(row.expires_at) - Date.parse(row.created_at), 24 * 60 * 60 * 1000);
-    }
-  } finally { db.close(); }
-}
-function expireSessionsAndReadAdminHash(databasePath: string): string {
-  const db = openDatabase(databasePath);
-  try {
-    const row = db.prepare(`SELECT password_hash AS hash FROM users
-      WHERE username = 'root-admin'`).get() as { hash: string };
-    db.prepare(`UPDATE sessions SET expires_at = ? WHERE revoked_at IS NULL`)
-      .run(new Date(Date.now() - 60_000).toISOString());
-    return row.hash;
-  } finally { db.close(); }
-}
-function adminHash(databasePath: string): string {
-  const db = openDatabase(databasePath);
-  try { return (db.prepare("SELECT password_hash AS hash FROM users WHERE username = 'root-admin'").get() as { hash: string }).hash; }
-  finally { db.close(); }
-}
-async function exerciseMigrationSafety(databasePath: string, backupDir: string): Promise<void> {
-  const before = openDatabase(databasePath);
-  const userCount = (before.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
-  before.prepare(`INSERT INTO schema_migrations
-    (id, name, checksum, release_version, applied_at) VALUES ('9999', 'future.sql', 'future', '9.9.9', ?)`)
-    .run(new Date().toISOString());
-  before.close();
-  await assert.rejects(() => buildServer(databasePath, false), /数据库版本高于当前程序.*未知 migration 9999/);
-  await assert.rejects(() => runMigrationDeployment(databasePath, backupDir),
-    /数据库版本高于当前程序.*已从 .* 自动恢复/);
-  const restored = openDatabase(databasePath);
-  try {
-    const unknown = restored.prepare("SELECT id FROM schema_migrations WHERE id = '9999'").get();
-    const restoredUsers = (restored.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
-    assert.ok(unknown);
-    assert.equal(restoredUsers, userCount);
-    assert.deepEqual(restored.pragma('integrity_check'), [{ integrity_check: 'ok' }]);
-    restored.prepare("DELETE FROM schema_migrations WHERE id = '9999'").run();
-  } finally { restored.close(); }
+  return { projectId: setup.created.projectId, classId: setup.created.classId,
+    workspaceId: setup.workspaceId, segmentId, promptId };
 }
 async function exercisePromptInspector(app: FastifyInstance, sessions: TestSessions,
   scenario: ProjectScenario): Promise<void> {
   const url = `/api/manage/prompt-structures?projectId=${scenario.projectId}&workspaceId=${scenario.workspaceId}&segmentId=${scenario.segmentId}`;
   const result = await app.inject({ method: 'GET', url, headers: { cookie: sessions.admin.cookie } });
   assert.equal(result.statusCode, 200, result.body);
-  const operation = result.json().operations.find((item: { id: string }) => item.id === 'translation');
-  const payload = JSON.parse(operation.messages[1].content);
-  assert.equal(typeof payload.overarchingPrompt, 'string');
-  assert.ok(payload.projectBrief && typeof payload.projectBrief === 'object');
-  assert.ok(Array.isArray(payload.terminology) && Array.isArray(payload.translationMemory));
-  const fullPostEdit = result.json().operations.find(
-    (item: { id: string }) => item.id === 'full_ai_post_edit');
-  const fullPostEditPayload = JSON.parse(fullPostEdit.messages[1].content);
-  assert.ok(fullPostEditPayload.segments.every(
-    (item: { currentTranslation: string | null }) => 'currentTranslation' in item));
+  assertPromptInspectorPayload(result.json());
   const teacherView = await app.inject({ method: 'GET', url, headers: { cookie: sessions.teacher.cookie } });
   assert.equal(teacherView.statusCode, 200, teacherView.body);
   const archivedId = await createStudentPrompt(app, sessions.student.cookie, scenario.projectId);
@@ -764,6 +721,23 @@ async function exercisePromptInspector(app: FastifyInstance, sessions: TestSessi
   assert.equal(managerWorkspace.statusCode, 201, managerWorkspace.body);
   const selected = await app.inject({ method: 'POST', url: `/api/workspaces/${managerWorkspace.json().id}/active-prompt`, headers: { cookie: sessions.admin.cookie }, payload: { promptVersionId: scenario.promptId } });
   assert.equal(selected.statusCode, 200, selected.body);
+}
+function assertPromptInspectorPayload(data: { operations: Array<{ id: string; messages: Array<{ content: string }> }> }) {
+  const operation = data.operations.find((item) => item.id === 'translation')!;
+  const payload = JSON.parse(operation.messages[1]!.content);
+  assert.equal(typeof payload.overarchingPrompt, 'string');
+  assert.ok(payload.projectBrief && typeof payload.projectBrief === 'object');
+  assert.ok(Array.isArray(payload.terminology) && Array.isArray(payload.translationMemory));
+  const fullPostEdit = data.operations.find((item) => item.id === 'full_ai_post_edit')!;
+  const fullPostEditPayload = JSON.parse(fullPostEdit.messages[1]!.content);
+  assert.ok(fullPostEditPayload.segments.every(
+    (item: { currentTranslation: string | null }) => 'currentTranslation' in item));
+  const promptCoach = data.operations.find((item) => item.id === 'prompt_coach')!;
+  assert.match(promptCoach.messages[0]!.content, /prompt coach/i);
+  const coachPayload = JSON.parse(promptCoach.messages[1]!.content);
+  assert.equal(coachPayload.focus, 'sentence-structure');
+  assert.equal(typeof coachPayload.coachInstruction, 'string');
+  assert.ok(Array.isArray(coachPayload.records));
 }
 test('发布版后端完成身份、隔离、模型调用和版本事件闭环', async () => {
   const mockModel = await startMockModel();
@@ -782,6 +756,8 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     const pendingProjectId = await exerciseNoModelProjectCreation(app, sessions);
     await exerciseEditedResourceInheritance(app, sessions);
     const serverModelId = await exerciseServerModelConfig(app, sessions, mockModel.baseUrl);
+    await exerciseClassPostEditPolicy(app, sessions, scenario);
+    await exercisePromptCoach(app, sessions, scenario);
     await exerciseFullTranslation(app, sessions, scenario);
     await exerciseFullPostEdit(app, sessions, scenario);
     await exerciseInvalidFullTranslation(app, sessions, scenario, mockModel.baseUrl);
@@ -799,7 +775,6 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     const passwordHash = expireSessionsAndReadAdminHash(databasePath);
     const deployed = await runMigrationDeployment(databasePath, backupDir);
     assert.ok(existsSync(deployed.backupPath));
-    assert.equal(adminHash(databasePath), passwordHash);
-    await exerciseMigrationSafety(databasePath, backupDir);
+    await exerciseMigrationSafety(databasePath, backupDir, passwordHash);
   } finally { await mockModel.close(); }
 });

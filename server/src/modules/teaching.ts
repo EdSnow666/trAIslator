@@ -117,8 +117,28 @@ export function classDetail(context: AppContext, user: AuthUser, classId: string
   ensureClassManage(context, user, classId);
   const summary = classSummary(context, classId);
   if (!summary) throw new AppError(404, 'CLASS_NOT_FOUND', '班级不存在。');
-  return { ...summary, members: listClassMembers(context, classId),
+  return { ...summary, aiPostEditEnabled: classFeatureEnabled(context, classId, 'ai_post_edit'),
+    members: listClassMembers(context, classId),
     projects: listClassProjects(context, classId) };
+}
+
+function classFeatureEnabled(context: AppContext, classId: string, featureCode: string): boolean {
+  const row = context.db.prepare(`SELECT enabled FROM class_feature_policies
+    WHERE class_id = ? AND feature_code = ?`).get(classId, featureCode) as
+    { enabled: number } | undefined;
+  return row ? Boolean(row.enabled) : true;
+}
+
+export function setClassAiPostEdit(context: AppContext, user: AuthUser,
+  classId: string, enabled: boolean): void {
+  ensureClassManage(context, user, classId);
+  context.db.prepare(`INSERT INTO class_feature_policies
+    (class_id, feature_code, enabled, updated_by, updated_at) VALUES (?, 'ai_post_edit', ?, ?, ?)
+    ON CONFLICT(class_id, feature_code) DO UPDATE SET enabled = excluded.enabled,
+      updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(classId, enabled ? 1 : 0, user.id, nowIso());
+  recordActivity(context, { eventType: 'class.ai_post_edit_policy_changed', actorUserId: user.id,
+    metadata: { classId, enabled } });
 }
 
 function memberByRole(context: AppContext, username: string, role: 'teacher' | 'student') {
@@ -175,7 +195,8 @@ function managedProjectIds(context: AppContext, user: AuthUser): string[] {
 function submittedPrompts(context: AppContext, projectIds: string[]): unknown[] {
   const placeholders = projectIds.map(() => '?').join(',');
   return context.db.prepare(`SELECT ps.id, ps.prompt_version_id AS promptVersionId, ps.status,
-      ps.submitted_at AS submittedAt, u.display_name AS submittedBy, u.username,
+      ps.submitted_at AS submittedAt, u.id AS submittedById,
+      u.display_name AS submittedBy, u.username,
       p.id AS projectId, p.name AS projectName, pv.version_number AS version,
       pv.title, pv.content, pl.prompt_kind AS promptKind
     FROM prompt_submissions ps JOIN prompt_versions pv ON pv.id = ps.prompt_version_id
@@ -186,14 +207,39 @@ function submittedPrompts(context: AppContext, projectIds: string[]): unknown[] 
 
 function submittedTranslations(context: AppContext, projectIds: string[]): unknown[] {
   const placeholders = projectIds.map(() => '?').join(',');
-  return context.db.prepare(`SELECT ts.id, ts.translation_version_id AS translationVersionId,
-      ts.status, ts.submitted_at AS submittedAt, u.display_name AS submittedBy, u.username,
+  const rows = context.db.prepare(`SELECT ts.id, ts.translation_version_id AS translationVersionId,
+      ts.status, ts.submitted_at AS submittedAt, u.id AS submittedById,
+      u.display_name AS submittedBy, u.username,
       p.id AS projectId, p.name AS projectName, s.id AS segmentId, s.source_text AS source,
-      tv.content, tv.version_kind AS versionKind
+      tv.content, tv.version_kind AS versionKind, tv.workspace_id AS workspaceId,
+      tv.root_translation_version_id AS rootVersionId
     FROM translation_submissions ts JOIN translation_versions tv ON tv.id = ts.translation_version_id
     JOIN projects p ON p.id = ts.project_id JOIN segments s ON s.id = ts.segment_id
     JOIN users u ON u.id = ts.submitted_by WHERE p.id IN (${placeholders})
-    ORDER BY ts.submitted_at DESC`).all(...projectIds);
+    ORDER BY ts.submitted_at DESC`).all(...projectIds) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({ ...row, modificationTrace: submissionTrace(context, row) }));
+}
+
+function submissionTrace(context: AppContext, submission: Record<string, unknown>): unknown[] {
+  if (!submission.workspaceId || !submission.rootVersionId) return [];
+  return context.db.prepare(`SELECT tv.id, tv.version_kind AS versionKind, tv.content,
+      tv.parent_version_id AS parentVersionId, tv.comparison_version_id AS comparisonVersionId,
+      tv.created_at AS createdAt,
+      COALESCE((SELECT json_group_array(json_object('kind', artifact.diff_kind,
+        'parts', json(artifact.diff_json), 'stats', json(artifact.stats_json)))
+        FROM translation_diff_artifacts artifact WHERE artifact.to_version_id = tv.id), '[]') AS diffArtifacts,
+      COALESCE((SELECT json_group_array(json_object('changeId', decision.change_id,
+        'decision', decision.decision, 'decidedAt', decision.decided_at))
+        FROM ai_change_decisions decision WHERE decision.ai_edit_version_id = tv.id), '[]') AS aiDecisions
+    FROM translation_versions tv WHERE tv.workspace_id = ? AND tv.segment_id = ?
+      AND tv.root_translation_version_id = ? ORDER BY tv.created_at, tv.rowid`)
+    .all(submission.workspaceId, submission.segmentId, submission.rootVersionId)
+    .map((row) => normalizeTraceRow(row as Record<string, unknown>));
+}
+
+function normalizeTraceRow(row: Record<string, unknown>): unknown {
+  return { ...row, diffArtifacts: JSON.parse(String(row.diffArtifacts || '[]')),
+    aiDecisions: JSON.parse(String(row.aiDecisions || '[]')) };
 }
 
 export function listManagedSubmissions(context: AppContext, user: AuthUser): unknown {

@@ -35,6 +35,7 @@ function isEditVersion(item) {
 }
 
 export function translationSequenceNumber(item, translations) {
+  if (!item) return 0;
   const roots = translations.filter((candidate) => !isEditVersion(candidate));
   const rootId = item.serverRootVersionId || item.serverBaseVersionId || item.id;
   const rootIndex = roots.findIndex((candidate) => candidate.id === rootId);
