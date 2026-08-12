@@ -166,7 +166,26 @@
 }
 
 .top-actions {
+  gap: 8px;
   justify-content: flex-end;
+}
+
+.ai-queue-indicator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #b8cbe3;
+  border-radius: 999px;
+  background: #edf5ff;
+  color: #24496f;
+  padding: 4px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ai-queue-indicator[hidden] {
+  display: none;
 }
 
 .role-switcher {
@@ -550,9 +569,15 @@ body.is-resizing-columns {
     gap: 10px;
   }
 
-  .brand-title,
+  .brand-title {
+    font-size: 13px;
+  }
+
   .role-switcher > span {
-    display: none;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .menu-dropdown summary {

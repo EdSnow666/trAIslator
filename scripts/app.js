@@ -1,6 +1,6 @@
 /**
  * 职责: 绑定 Translation AIducator 演示站点的全部用户交互
- * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/ai-post-edit-actions.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js, ui/prompt-management.js
+ * 依赖内部: state/store.js, services/auth-client.js, services/server-data.js, services/segmenter.js, services/layout-preferences.js, services/modal-focus.js, services/prompt-coach.js, services/post-edit-export.js, services/project-export.js, ui/ai-post-edit-actions.js, ui/ai-queue-status.js, ui/render.js, ui/dialogs.js, ui/management.js, ui/project-management.js, ui/personal-api-keys.js, ui/model-management.js, ui/prompt-inspector.js, ui/prompt-management.js
  * 依赖外部: DOM API, Blob API
  * 暴露: 页面入口
  */
@@ -27,6 +27,7 @@ import { openProjectManagementModal } from './ui/project-management.js';
 import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
+import { initAiQueueStatus, prioritizeAiQueue } from './ui/ai-queue-status.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
 import { cancelPromptCoach, confirmRunPromptCoach, resetPromptCoachPrompt,
   runPromptCoach } from './ui/prompt-coach-actions.js';
@@ -100,6 +101,7 @@ const actionHandlers = {
   'open-project-management': openProjectManagementModal,
   'open-personal-api-keys': openPersonalApiKeysModal,
   'open-prompt-inspector': openPromptInspectorModal,
+  'prioritize-ai-request': prioritizeAiQueue,
   'reset-layout': resetLayout, 'switch-left-prompt-kind': (trigger) => { trigger.closest('#prompt-kind-switch').dataset.kind = trigger.dataset.promptKind; renderApp(); }, 'open-new-prompt-version': dialogs.openNewPromptVersion, 'bulk-generate-current': generateCurrent, 'bulk-generate-all': generateAllTranslations, 'bulk-post-edit-all': generateAllPostEdits, 'bulk-confirm-all': confirmAllTranslations, 'bulk-submit-all': submitAllTranslations, 'submit-current-translation': submitCurrentTranslation,
 };
 
@@ -774,6 +776,7 @@ if (auth.mode === 'server') {
 }
 store.subscribe(renderApp);
 bindStaticEvents();
+initAiQueueStatus();
 initModalFocusGuard();
 initLayoutPreferences();
 renderApp();

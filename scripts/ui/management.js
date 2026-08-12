@@ -398,6 +398,7 @@ async function createClass(form) {
     name: data.get('name'), code: data.get('code'),
   }) });
   managementState.selectedClassId = result.id;
+  managementState.classCreateOpen = false;
   await refreshManagement('班级已创建。');
 }
 

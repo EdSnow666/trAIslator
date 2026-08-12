@@ -50,7 +50,7 @@ function modelRows() {
 function personalKeyRows() {
   if (!modelState.keys.length) return '<div class="empty-state">尚未保存个人 API Key。</div>';
   return modelState.keys.map((item) => `<div class="management-user-row model-list-row"><span><strong>${escapeHtml(item.label)}</strong>
-    <small>${escapeHtml(item.provider)} · ${item.lastUsedAt ? `最近使用 ${escapeHtml(item.lastUsedAt)}` : '尚未使用'}</small></span>
+    <small>${escapeHtml(item.provider)} · ${escapeHtml(item.model)}<br>${escapeHtml(item.baseUrl)}</small></span>
     <span><em>${item.status === 'active' ? '已启用' : '已停用'}</em>${item.status === 'active'
       ? `<button class="text-button danger-text" data-model-action="disable-key" data-key-id="${item.id}">停用</button>` : ''}</span></div>`).join('');
 }
@@ -59,6 +59,8 @@ function personalKeyForm() {
   return `<form class="management-panel" data-combined-key-form><h3>保存个人 Key</h3>
     <label>接口类型<select class="field" name="provider"><option value="openai_compatible">OpenAI-compatible</option></select></label>
     <label>名称<input class="field" name="label" required placeholder="例如 我的实验 Key"></label>
+    <label>接口域名（Base URL）<input class="field" type="url" name="baseUrl" required placeholder="https://api.example.com/v1"></label>
+    <label>模型名称<input class="field" name="model" required placeholder="model-name"></label>
     <label>API Key<input class="field" type="password" name="apiKey" required autocomplete="new-password" placeholder="页面不会回显"></label>
     <button class="button button-primary" type="submit">加密保存</button></form>`;
 }
@@ -124,7 +126,8 @@ async function loadModels() {
 async function savePersonalKey(form) {
   const data = new FormData(form);
   await apiRequest('/api/me/api-keys', { method: 'POST', body: JSON.stringify({
-    provider: data.get('provider'), label: data.get('label'), apiKey: data.get('apiKey'),
+    provider: data.get('provider'), label: data.get('label'), baseUrl: data.get('baseUrl'),
+    model: data.get('model'), apiKey: data.get('apiKey'),
   }) });
   await loadModels();
   renderModels();

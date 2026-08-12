@@ -1,5 +1,5 @@
 /**
- * 职责: 使用服务器主密钥加密个人模型 Key，并限定为当前用户读写
+ * 职责: 加密个人模型 Key、保存完整连接元数据，并限定为当前用户读写
  * 依赖内部: ../auth/types.ts, ../config.ts, ../context.ts, ../errors.ts, ../shared.ts, ./activity.ts
  * 依赖外部: node:crypto, node:fs, node:path
  * 暴露: listPersonalKeys | savePersonalKey | disablePersonalKey | resolvePersonalKey
@@ -18,7 +18,23 @@ import { recordActivity } from './activity.js';
 interface KeyRow {
   id: string; ciphertext: string; iv: string; auth_tag: string; key_version: number;
 }
-interface PersonalKeyInput { provider: string; label: string; apiKey: string }
+interface PersonalKeyInput {
+  provider: string;
+  label: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+function normalizedBaseUrl(value: string): string {
+  let parsed: URL;
+  try { parsed = new URL(value.trim()); }
+  catch { throw new AppError(400, 'INVALID_API_BASE_URL', '接口域名必须是有效的 HTTP(S) URL。'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new AppError(400, 'INVALID_API_BASE_URL', '接口域名只支持 HTTP 或 HTTPS。');
+  }
+  return parsed.toString().replace(/\/$/, '');
+}
 
 function decodeMasterKey(encoded: string): Buffer {
   const key = Buffer.from(encoded, 'base64');
@@ -55,27 +71,32 @@ function decrypt(row: KeyRow): string {
 }
 
 export function listPersonalKeys(context: AppContext, user: AuthUser): unknown[] {
-  return context.db.prepare(`SELECT id, provider, label, status, last_used_at AS lastUsedAt,
+  return context.db.prepare(`SELECT id, provider, label, base_url AS baseUrl, model,
+    status, last_used_at AS lastUsedAt,
     created_at AS createdAt, updated_at AS updatedAt FROM user_api_keys
     WHERE user_id = ? ORDER BY provider, label`).all(user.id);
 }
 
 export function savePersonalKey(context: AppContext, user: AuthUser, input: PersonalKeyInput): string {
-  if (!input.provider.trim() || !input.label.trim() || !input.apiKey.trim()) {
-    throw new AppError(400, 'INVALID_API_KEY', '服务商、名称和 API Key 均不能为空。');
+  if (!input.provider.trim() || !input.label.trim() || !input.model.trim() || !input.apiKey.trim()) {
+    throw new AppError(400, 'INVALID_API_KEY', '接口类型、名称、模型名称和 API Key 均不能为空。');
   }
+  const baseUrl = normalizedBaseUrl(input.baseUrl);
   const id = newId();
   const sealed = encrypt(input.apiKey.trim());
   const time = nowIso();
-  context.db.prepare(`INSERT INTO user_api_keys (id, user_id, provider, label, ciphertext,
-    iv, auth_tag, key_version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)
+  context.db.prepare(`INSERT INTO user_api_keys (id, user_id, provider, label, base_url, model,
+    ciphertext, iv, auth_tag, key_version, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)
     ON CONFLICT(user_id, provider, label) DO UPDATE SET ciphertext = excluded.ciphertext,
       iv = excluded.iv, auth_tag = excluded.auth_tag, key_version = excluded.key_version,
-      status = 'active', updated_at = excluded.updated_at`)
-    .run(id, user.id, input.provider.trim(), input.label.trim(), sealed.ciphertext,
-      sealed.iv, sealed.authTag, time, time);
+      base_url = excluded.base_url, model = excluded.model, status = 'active',
+      updated_at = excluded.updated_at`)
+    .run(id, user.id, input.provider.trim(), input.label.trim(), baseUrl, input.model.trim(),
+      sealed.ciphertext, sealed.iv, sealed.authTag, time, time);
   recordActivity(context, { eventType: 'account.personal_api_key_saved', actorUserId: user.id,
-    metadata: { provider: input.provider.trim(), label: input.label.trim() } });
+    metadata: { provider: input.provider.trim(), label: input.label.trim(), baseUrl,
+      model: input.model.trim() } });
   const row = context.db.prepare(`SELECT id FROM user_api_keys
     WHERE user_id = ? AND provider = ? AND label = ?`)
     .get(user.id, input.provider.trim(), input.label.trim()) as { id: string };

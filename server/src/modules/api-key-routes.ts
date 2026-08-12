@@ -1,5 +1,5 @@
 /**
- * 职责: 暴露当前用户个人模型 Key 的元数据、加密保存和禁用 API
+ * 职责: 暴露当前用户个人模型连接的元数据、加密保存和禁用 API
  * 依赖内部: ../auth/authorization.ts, ../context.ts, ./api-keys.ts
  * 依赖外部: fastify
  * 暴露: registerApiKeyRoutes
@@ -10,7 +10,13 @@ import { requireReadyAccount } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { disablePersonalKey, listPersonalKeys, savePersonalKey } from './api-keys.js';
 
-interface KeyBody { provider: string; label: string; apiKey: string }
+interface KeyBody {
+  provider: string;
+  label: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
 interface KeyParams { keyId: string }
 
 export function registerApiKeyRoutes(app: FastifyInstance, context: AppContext): void {

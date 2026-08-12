@@ -1,6 +1,6 @@
 /**
  * 职责: 加密保存统一服务器模型配置，并为 AI 调用解析默认配置
- * 依赖内部: ../auth/types.ts, ../config.ts, ../context.ts, ../errors.ts, ../shared.ts, ./activity.ts
+ * 依赖内部: ../auth/types.ts, ../config.ts, ../context.ts, ../errors.ts, ../shared.ts, ./activity.ts, ./ai-queue.ts
  * 依赖外部: node:crypto, node:fs, node:path
  * 暴露: listServerModels | listServerModelDirectory | saveServerModel | disableServerModel | resolveServerModel | serverModelCapability
  */
@@ -14,8 +14,10 @@ import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { newId, nowIso } from '../shared.js';
 import { recordActivity } from './activity.js';
+import { aiResourceCooldownRemaining } from './ai-queue.js';
 
 interface SealedKeyRow { ciphertext: string; iv: string; auth_tag: string }
+let rotationIndex = 0;
 export interface ServerModelInput {
   id?: string; name: string; provider: 'openai_compatible'; baseUrl: string; model: string;
   apiKey?: string; isDefault?: boolean; requestTimeoutMs?: number; maxRetries?: number;
@@ -174,12 +176,16 @@ export function disableServerModel(context: AppContext, user: AuthUser, id: stri
 }
 
 export function resolveServerModel(context: AppContext, id?: string): ResolvedServerModel {
-  const row = context.db.prepare(`SELECT id, name, provider, base_url AS baseUrl, model,
+  const rows = context.db.prepare(`SELECT id, name, provider, base_url AS baseUrl, model,
       ciphertext, iv, auth_tag, request_timeout_ms AS requestTimeoutMs, max_retries AS maxRetries
     FROM server_model_configs WHERE status = 'active' AND (? IS NULL OR id = ?)
-    ORDER BY is_default DESC, updated_at DESC LIMIT 1`).get(id || null, id || null) as
-    (ResolvedServerModel & SealedKeyRow) | undefined;
+    ORDER BY is_default DESC, updated_at DESC`).all(id || null, id || null) as
+    Array<ResolvedServerModel & SealedKeyRow>;
+  const available = id ? rows : rows.filter((item) => aiResourceCooldownRemaining(item.id) === 0);
+  const candidates = available.length ? available : rows;
+  const row = id ? candidates[0] : candidates[rotationIndex % Math.max(candidates.length, 1)];
   if (!row) throw new AppError(503, 'SERVER_MODEL_UNAVAILABLE', '当前没有可用的服务器模型配置。');
+  if (!id) rotationIndex += 1;
   context.db.prepare('UPDATE server_model_configs SET last_used_at = ? WHERE id = ?').run(nowIso(), row.id);
   return { id: row.id, name: row.name, provider: row.provider, baseUrl: row.baseUrl,
     model: row.model, apiKey: decrypt(row), requestTimeoutMs: row.requestTimeoutMs,

@@ -1,9 +1,11 @@
 /**
  * 职责: 检测后端、完成登录和首次改密，并把真实身份呈现在现有 Demo 顶栏
- * 依赖内部: 无
+ * 依赖内部: ./ai-queue-client.js
  * 依赖外部: Fetch API, DOM API
  * 暴露: initializeAuth | apiRequest | currentAuth
  */
+
+import { beginAiQueueWatch } from './ai-queue-client.js';
 
 export const currentAuth = {
   mode: 'checking',
@@ -33,12 +35,15 @@ export async function apiRequest(path, options = {}) {
   if (options.body !== undefined && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  const response = await fetch(path, {
-    credentials: 'same-origin',
-    ...options,
-    headers,
-  });
-  return parseResponse(response);
+  const queueWatch = beginAiQueueWatch(path, options);
+  try {
+    const response = await fetch(path, {
+      credentials: 'same-origin',
+      ...options,
+      headers,
+    });
+    return await parseResponse(response);
+  } finally { queueWatch?.stop(); }
 }
 
 async function backendAvailable() {
@@ -120,7 +125,9 @@ function renderIdentity(user) {
   const actions = document.querySelector('.top-actions');
   const selector = actions.querySelector('#role-select');
   const role = user.roles.some((item) => ['admin', 'teacher'].includes(item)) ? 'teacher' : 'student';
-  actions.querySelector('.role-switcher > span').textContent = user.displayName;
+  const identity = actions.querySelector('.role-switcher > span');
+  identity.textContent = `${user.displayName} · @${user.username}`;
+  identity.title = `${user.displayName} · @${user.username}`;
   selector.innerHTML = `<option value="${role}">${labels}</option>`;
   selector.disabled = true;
   const logout = Object.assign(document.createElement('button'), {
@@ -133,6 +140,7 @@ function renderIdentity(user) {
   document.querySelector('#management-button').hidden = !manager;
   document.querySelector('#project-management-button').hidden = !manager;
   document.querySelector('#personal-key-project').hidden = manager;
+  document.querySelector('#reset-button').hidden = user.roles.includes('student');
   document.querySelector('#prompt-inspector-button').hidden = false;
   document.querySelector('.rail-footer span').textContent = '服务器版 · 已登录';
   logout.addEventListener('click', async () => {

@@ -1,6 +1,6 @@
 /**
  * 职责: 从已确认个人 Diff 或全班已提交 Diff 运行并持久化 AI Prompt 教练
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./ai-queue.ts
  * 依赖外部: 无
  * 暴露: 个人/多项目/全班 Prompt Coach 运行、取消、设置与后台消息快照
  */
@@ -12,6 +12,7 @@ import { jsonText, newId, nowIso } from '../shared.js';
 import { ensureClassManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
 import { runConfiguredModel } from './ai-execution.js';
+import { cancelAiQueueRequest } from './ai-queue.js';
 
 export interface PromptCoachInput { requestId: string; modelConfigId?: string; coachPrompt?: string }
 export interface ProjectPromptCoachInput extends PromptCoachInput { projectIds: string[] }
@@ -249,8 +250,8 @@ async function executeCoach(context: AppContext, user: AuthUser, scopeType: Coac
   const controller = new AbortController();
   activeCoachRuns.set(input.requestId, { scopeType, scopeId, controller });
   try {
-    const model = await runConfiguredModel(context, requestBody('', records, coachPrompt.text), input.modelConfigId,
-      controller.signal);
+    const model = await runConfiguredModel(context, user, input.requestId, 'prompt_coach',
+      requestBody('', records, coachPrompt.text), input.modelConfigId, controller.signal);
     const rules = normalizedRules(model.content, records);
     const result = coachResult(scopeType, scopeId, model.model, records, rules, coachPrompt, projectIds);
     saveCoachRun(context, user, scopeType, scopeId, projectId, input, model.modelConfigId,
@@ -259,27 +260,28 @@ async function executeCoach(context: AppContext, user: AuthUser, scopeType: Coac
   } finally { activeCoachRuns.delete(input.requestId); }
 }
 
-function cancelCoachRun(scopeType: CoachScope, scopeId: string, requestId: string): boolean {
+function cancelCoachRun(user: AuthUser, scopeType: CoachScope, scopeId: string, requestId: string): boolean {
+  const queued = cancelAiQueueRequest(user, requestId);
   const active = activeCoachRuns.get(requestId);
-  if (!active || active.scopeType !== scopeType || active.scopeId !== scopeId) return false;
+  if (!active || active.scopeType !== scopeType || active.scopeId !== scopeId) return queued;
   active.controller.abort();
   return true;
 }
 
 export function cancelProjectPromptCoach(user: AuthUser, requestId: string): boolean {
-  return cancelCoachRun('projects', user.id, requestId);
+  return cancelCoachRun(user, 'projects', user.id, requestId);
 }
 
 export function cancelWorkspacePromptCoach(context: AppContext, user: AuthUser,
   workspaceId: string, requestId: string): boolean {
   ensureWorkspaceOwner(context, user, workspaceId);
-  return cancelCoachRun('workspace', workspaceId, requestId);
+  return cancelCoachRun(user, 'workspace', workspaceId, requestId);
 }
 
 export function cancelClassPromptCoach(context: AppContext, user: AuthUser,
   classId: string, requestId: string): boolean {
   ensureClassManage(context, user, classId);
-  return cancelCoachRun('class', classId, requestId);
+  return cancelCoachRun(user, 'class', classId, requestId);
 }
 
 function coachResult(scopeType: string, scopeId: string, model: string,

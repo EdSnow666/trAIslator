@@ -9,7 +9,7 @@
   <meta name="description" content="面向英中、中英翻译教学的 Prompt 驱动型 CAT 演示工具">
   <title>Translation AIducator</title>
   <link rel="stylesheet" href="./styles/base.css?v=20260810-01">
-  <link rel="stylesheet" href="./styles/layout.css?v=20260806-08">
+  <link rel="stylesheet" href="./styles/layout.css?v=20260812-01">
   <link rel="stylesheet" href="./styles/components.css?v=20260806-07">
   <link rel="stylesheet" href="./styles/prompt-coach.css?v=20260804-01">
   <link rel="stylesheet" href="./styles/prompt-management.css?v=20260806-07">
@@ -111,6 +111,10 @@
       </div>
 
       <div class="top-actions">
+        <div id="ai-queue-indicator" class="ai-queue-indicator" role="status" hidden>
+          <span data-ai-queue-label></span>
+          <button class="text-button" data-action="prioritize-ai-request" hidden>插队</button>
+        </div>
         <label class="role-switcher">
           <span>演示身份</span>
           <select id="role-select" class="field field-compact">
@@ -211,6 +215,6 @@
   <div id="modal-root"></div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
-  <script type="module" src="./scripts/app.js?v=20260810-04"></script>
+  <script type="module" src="./scripts/app.js?v=20260812-01"></script>
 </body>
 </html>

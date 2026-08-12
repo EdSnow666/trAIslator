@@ -92,7 +92,7 @@ export function dissolveClass(context: AppContext, user: AuthUser, classId: stri
     const result = context.db.prepare(`UPDATE classes SET status = 'archived', deleted_at = ?, updated_at = ?
       WHERE id = ? AND deleted_at IS NULL`).run(time, time, classId);
     if (!result.changes) throw new AppError(404, 'CLASS_NOT_FOUND', '班级不存在。');
-    context.db.prepare("UPDATE project_assignments SET status = 'inactive' WHERE class_id = ? AND status = 'active'").run(classId);
+    context.db.prepare("UPDATE project_assignments SET status = 'closed' WHERE class_id = ? AND status = 'active'").run(classId);
     recordActivity(context, { eventType: 'class.dissolved', actorUserId: user.id, metadata: { classId } });
   }).immediate();
 }

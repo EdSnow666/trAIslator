@@ -223,7 +223,14 @@ export function listProjectResourceCatalog(context: AppContext, user: AuthUser):
           AND NOT EXISTS (SELECT 1 FROM prompt_version_archives pva
           WHERE pva.prompt_version_id = pv.id) AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
           (p.project_kind = 'system_template' AND ? = 1))
-        ORDER BY pv.created_at DESC LIMIT 1) AS promptContent
+        ORDER BY pv.created_at DESC LIMIT 1) AS promptContent,
+      (SELECT pv.title FROM prompt_versions pv JOIN prompt_lineages pl ON pl.id = pv.lineage_id
+        LEFT JOIN project_prompt_publications ppp ON ppp.prompt_version_id = pv.id AND ppp.retired_at IS NULL
+        WHERE pl.project_id = p.id AND pl.prompt_kind = 'translation'
+          AND NOT EXISTS (SELECT 1 FROM prompt_version_archives pva
+          WHERE pva.prompt_version_id = pv.id) AND (pl.owner_user_id = ? OR ppp.id IS NOT NULL OR
+          (p.project_kind = 'system_template' AND ? = 1))
+        ORDER BY pv.created_at DESC LIMIT 1) AS promptTitle
     FROM projects p LEFT JOIN project_managers pm ON pm.project_id = p.id AND pm.user_id = ?
     LEFT JOIN project_assignments pa ON pa.project_id = p.id AND pa.status = 'active'
     LEFT JOIN class_memberships cm ON cm.class_id = pa.class_id AND cm.user_id = ? AND cm.status = 'active'
@@ -235,5 +242,6 @@ export function listProjectResourceCatalog(context: AppContext, user: AuthUser):
       (p.project_kind <> 'system_template' AND (? = 1 OR pm.user_id IS NOT NULL
         OR cm.user_id IS NOT NULL OR ep.user_id IS NOT NULL)))
     GROUP BY p.id ORDER BY p.project_kind DESC, p.updated_at DESC`)
-    .all(user.id, privileged, user.id, privileged, user.id, user.id, user.id, privileged, admin);
+    .all(user.id, privileged, user.id, privileged, user.id, privileged,
+      user.id, user.id, user.id, privileged, admin);
 }

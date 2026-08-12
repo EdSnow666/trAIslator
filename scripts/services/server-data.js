@@ -88,7 +88,7 @@ function parseBrief(value) {
 
 function mapResource(item) {
   const prompt = item.promptVersionId ? { id: item.promptVersionId, version: 1,
-    title: '可继承全文 Prompt', content: item.promptContent || '' } : null;
+    title: item.promptTitle || '未命名 Prompt', content: item.promptContent || '' } : null;
   return { id: item.projectId, name: item.name, direction: item.direction,
     briefVersionId: item.briefVersionId, brief: parseBrief(item.briefContent),
     activePromptId: prompt?.id || null, prompts: prompt ? [prompt] : [] };

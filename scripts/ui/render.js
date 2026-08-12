@@ -103,7 +103,7 @@ function updateMenuToggle(selector, enabled, enabledText, disabledText) {
 
 function renderProjectCard(project) {
   document.querySelector('#project-title').textContent = project.name;
-  document.querySelector('#project-meta').textContent = `${project.sourceLang} → ${project.targetLang} · 教学演示项目`;
+  document.querySelector('#project-meta').textContent = `${project.sourceLang} → ${project.targetLang}`;
   const prompt = project.prompts.find((item) => item.id === project.activePromptId);
   document.querySelector('#active-prompt-label').textContent = `Prompt ${promptLabel(prompt)} · ${prompt.title}`;
 }

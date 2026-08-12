@@ -11,6 +11,7 @@ import type { AppContext } from '../context.js';
 import { cancelAiTranslation, executeAiTranslation, executeFullTranslation, testServerModelConnection,
   type AiExecutionInput, type FullTranslationInput } from './ai-execution.js';
 import { aiPostEditAllowed, ensureProjectView, ensureWorkspaceView } from './access.js';
+import { aiQueueStatus, prioritizeAiRequest } from './ai-queue.js';
 import { inspectPromptStructures } from './prompt-inspector.js';
 import { disableServerModel, listServerModelDirectory, listServerModels, saveServerModel, serverModelCapability,
   type ServerModelInput } from './server-models.js';
@@ -19,6 +20,7 @@ interface ModelParams { modelConfigId: string }
 interface WorkspaceParams { workspaceId: string }
 interface CancelBody { requestId: string }
 interface InspectQuery { projectId: string; workspaceId?: string; segmentId?: string }
+interface QueueParams { requestId: string }
 
 function registerModelManagementRoutes(app: FastifyInstance, context: AppContext): void {
   app.get<{ Querystring: InspectQuery }>('/api/manage/prompt-structures',
@@ -49,6 +51,14 @@ function registerModelManagementRoutes(app: FastifyInstance, context: AppContext
 }
 
 function registerAiExecutionRoutes(app: FastifyInstance, context: AppContext): void {
+  app.get<{ Params: QueueParams }>('/api/ai/queue/:requestId',
+    { preHandler: requireReadyAccount }, async (request) => (
+      aiQueueStatus(request.authUser!, request.params.requestId)
+    ));
+  app.post<{ Params: QueueParams }>('/api/ai/queue/:requestId/priority',
+    { preHandler: requireRoles('admin', 'teacher') }, async (request) => (
+      prioritizeAiRequest(request.authUser!, request.params.requestId)
+    ));
   app.get('/api/ai/server-model-directory', { preHandler: requireReadyAccount }, async () => ({
     models: listServerModelDirectory(context),
   }));

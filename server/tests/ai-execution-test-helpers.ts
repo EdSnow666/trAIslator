@@ -274,4 +274,7 @@ export async function exerciseInvalidFullTranslation(app: FastifyInstance, sessi
     headers: { cookie: sessions.student.cookie } });
   assert.deepEqual(after.json().project.segments.map(
     (item: { currentTranslationId: string }) => item.currentTranslationId), currentIds);
+  const disabled = await app.inject({ method: 'DELETE',
+    url: `/api/manage/server-models/${model.json().id}`, headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(disabled.statusCode, 200, disabled.body);
 }

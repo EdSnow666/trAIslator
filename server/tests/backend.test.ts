@@ -20,12 +20,13 @@ import { exerciseFullPostEdit, exerciseFullTranslation, exerciseInvalidFullTrans
   exerciseClassPostEditPolicy, exercisePromptCoach, startMockModel } from './ai-execution-test-helpers.js';
 import { exerciseMigrationSafety, expireSessionsAndReadAdminHash,
   verifySessionLifetime } from './migration-safety-test-helpers.js';
+import { exerciseAdminAccountManagement, exerciseClassDissolveWithAssignment }
+  from './teaching-lifecycle-test-helpers.js';
 interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
 interface ProjectScenario {
   projectId: string; classId: string; workspaceId: string; segmentId: string; promptId: string;
 }
-
 async function login(app: FastifyInstance, username: string, password: string): Promise<Session> {
   const response = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username, password } });
   assert.equal(response.statusCode, 200, response.body);
@@ -124,8 +125,11 @@ async function submitAndPublishPrompt(app: FastifyInstance, teacher: string, stu
   assert.equal(prompt.isPublished, true);
   assert.equal(prompt.submissionStatus, 'accepted');
   const catalog = await app.inject({ method: 'GET', url: '/api/project-resources/catalog', headers: { cookie: student } });
-  assert.ok(catalog.json().resources.some((item: { projectId: string; promptVersionId: string }) =>
-    item.projectId === projectId && item.promptVersionId === promptId));
+  const resource = catalog.json().resources.find(
+    (item: { projectId: string; promptVersionId: string }) => item.projectId === projectId,
+  );
+  assert.equal(resource.promptVersionId, promptId);
+  assert.equal(resource.promptTitle, '学生结构规则');
 }
 async function exercisePromptCollaboration(app: FastifyInstance, teacher: string, student: string,
   projectId: string, workspaceId: string, promptId: string): Promise<void> {
@@ -214,14 +218,33 @@ async function exerciseProjectSnapshot(app: FastifyInstance, cookie: string, pro
 }
 async function exercisePersonalKey(app: FastifyInstance, cookie: string): Promise<void> {
   const saved = await app.inject({ method: 'POST', url: '/api/me/api-keys', headers: { cookie },
-    payload: { provider: 'openai-compatible', label: '个人测试', apiKey: 'secret-test-value' } });
+    payload: { provider: 'openai_compatible', label: '个人测试',
+      baseUrl: 'https://api.example.com/v1/', model: 'example-model', apiKey: 'secret-test-value' } });
   assert.equal(saved.statusCode, 201, saved.body);
   const listed = await app.inject({ method: 'GET', url: '/api/me/api-keys', headers: { cookie } });
   assert.equal(listed.statusCode, 200, listed.body);
   assert.equal(listed.body.includes('secret-test-value'), false);
+  assert.equal(listed.json().keys[0].baseUrl, 'https://api.example.com/v1');
+  assert.equal(listed.json().keys[0].model, 'example-model');
   const disabled = await app.inject({ method: 'DELETE',
     url: `/api/me/api-keys/${saved.json().id}`, headers: { cookie } });
   assert.equal(disabled.statusCode, 200, disabled.body);
+}
+async function exerciseTeacherResourceImports(app: FastifyInstance, sessions: TestSessions,
+  projectId: string): Promise<void> {
+  for (const [kind, source, target] of [['terms', 'source term', '目标术语'],
+    ['tm', 'Source memory.', '翻译记忆。']] as const) {
+    const response = await app.inject({ method: 'POST',
+      url: `/api/projects/${projectId}/resources/${kind}/import`,
+      headers: { cookie: sessions.teacher.cookie }, payload: { pairs: [{ source, target }] } });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().count, 1);
+  }
+  const snapshot = await app.inject({ method: 'GET', url: `/api/projects/${projectId}/snapshot`,
+    headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(snapshot.statusCode, 200, snapshot.body);
+  assert.ok(snapshot.json().project.terms.some((item: { source: string }) => item.source === 'source term'));
+  assert.ok(snapshot.json().project.tm.some((item: { source: string }) => item.source === 'Source memory.'));
 }
 function verifyDatabaseState(databasePath: string, projectId: string): void {
   const db = openDatabase(databasePath);
@@ -486,6 +509,9 @@ async function exerciseProviderErrorDetail(app: FastifyInstance, sessions: TestS
   assert.equal(tested.statusCode, 502, tested.body);
   assert.equal(tested.json().code, 'PROVIDER_HTTP_503');
   assert.match(tested.json().message, /No available channel for model no-channel-model/);
+  const disabled = await app.inject({ method: 'DELETE',
+    url: `/api/manage/server-models/${saved.json().id}`, headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(disabled.statusCode, 200, disabled.body);
 }
 async function exerciseNoModelProjectCreation(app: FastifyInstance, sessions: TestSessions): Promise<string> {
   const catalog = await app.inject({ method: 'GET', url: '/api/project-resources/catalog',
@@ -563,6 +589,9 @@ async function exerciseDeferredGeneration(app: FastifyInstance, sessions: TestSe
 }
 async function exerciseUnavailableModelFallback(app: FastifyInstance, sessions: TestSessions,
   workingId: string, workingBaseUrl: string): Promise<void> {
+  const disabled = await app.inject({ method: 'DELETE', url: `/api/manage/server-models/${workingId}`,
+    headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(disabled.statusCode, 200, disabled.body);
   const bad = await app.inject({ method: 'POST', url: '/api/manage/server-models',
     headers: { cookie: sessions.teacher.cookie }, payload: { name: '不可用模型', provider: 'openai_compatible',
       baseUrl: 'http://127.0.0.1:1/v1', model: 'offline-model', apiKey: 'offline-key',
@@ -585,6 +614,9 @@ async function exerciseUnavailableModelFallback(app: FastifyInstance, sessions: 
     headers: { cookie: sessions.teacher.cookie }, payload: { id: workingId, name: '课堂统一模型',
       provider: 'openai_compatible', baseUrl: workingBaseUrl, model: 'mock-translation-model', isDefault: true } });
   assert.equal(restored.statusCode, 201, restored.body);
+  const removedBad = await app.inject({ method: 'DELETE',
+    url: `/api/manage/server-models/${bad.json().id}`, headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(removedBad.statusCode, 200, removedBad.body);
 }
 async function exerciseProjectLifecycle(app: FastifyInstance, sessions: TestSessions,
   projectId: string, classId: string): Promise<void> {
@@ -640,21 +672,6 @@ async function exerciseLocalProjectSetup(app: FastifyInstance, sessions: TestSes
   assert.equal(tagged.teachingAssignmentCount, 1);
   assert.deepEqual(tagged.classTags, ['双路径班级']);
   await exerciseProjectLifecycle(app, sessions, projectId, targetClass.json().id);
-}
-async function exerciseAdminAccountManagement(app: FastifyInstance,
-  sessions: TestSessions): Promise<void> {
-  const users = await app.inject({ method: 'GET', url: '/api/admin/users',
-    headers: { cookie: sessions.admin.cookie } });
-  assert.equal(users.statusCode, 200, users.body);
-  const outsider = users.json().users.find((item: { username: string }) => item.username === 'student-b');
-  assert.deepEqual(outsider.roles, ['student']);
-  const reset = await app.inject({ method: 'POST', url: `/api/admin/users/${outsider.id}/reset-password`,
-    headers: { cookie: sessions.admin.cookie } });
-  assert.equal(reset.statusCode, 200, reset.body);
-  assert.equal(reset.json().mustChangePassword, true);
-  const revoked = await app.inject({ method: 'GET', url: '/api/auth/me',
-    headers: { cookie: sessions.outsider.cookie } });
-  assert.equal(revoked.statusCode, 401);
 }
 async function prepareStudentWorkspace(app: FastifyInstance, sessions: TestSessions) {
   const projects = await app.inject({ method: 'GET', url: '/api/projects',
@@ -740,6 +757,7 @@ function assertPromptInspectorPayload(data: { operations: Array<{ id: string; me
   assert.ok(Array.isArray(coachPayload.records));
 }
 test('发布版后端完成身份、隔离、模型调用和版本事件闭环', async () => {
+  process.env.AI_COOLDOWN_BASE_MS = '5';
   const mockModel = await startMockModel();
   const root = mkdtempSync(join(tmpdir(), 'translation-aiducator-test-'));
   delete process.env.PERSONAL_KEY_MASTER_KEY;
@@ -752,11 +770,13 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     const sessions = await provisionSessions(app, adminPassword);
     verifySessionLifetime(databasePath);
     const scenario = await runProjectScenario(app, sessions);
+    await exerciseTeacherResourceImports(app, sessions, scenario.projectId);
     await exercisePromptInspector(app, sessions, scenario);
     const pendingProjectId = await exerciseNoModelProjectCreation(app, sessions);
     await exerciseEditedResourceInheritance(app, sessions);
     const serverModelId = await exerciseServerModelConfig(app, sessions, mockModel.baseUrl);
     await exerciseClassPostEditPolicy(app, sessions, scenario);
+    await exerciseClassDissolveWithAssignment(app, sessions, scenario.projectId);
     await exercisePromptCoach(app, sessions, scenario);
     await exerciseFullTranslation(app, sessions, scenario);
     await exerciseFullPostEdit(app, sessions, scenario);

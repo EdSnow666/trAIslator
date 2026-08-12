@@ -11,8 +11,8 @@
 | `activity*.ts` | 有意义事件的追加式记录、管理员全局审计与教师受管范围审计 |
 | `document-import.ts` | TXT、DOCX、PDF 文本提取、上传限制和导入事件记录 |
 | `resource-imports.ts`、`resource-import-routes.ts` | 交错式原文/译文段落批量导入术语、翻译记忆与参考译文 |
-| `api-keys*.ts` | 个人模型 Key 的 AES-256-GCM 加密保存和所有者隔离 |
-| `server-models.ts`、`ai*.ts`、`prompt-structures.ts`、`prompt-inspector.ts` | 教师/管理员统一模型配置、全账号安全目录与发送结构检查、连接测试、加密 Key、单句 AI 调用、全文 JSON 翻译/译后编辑及严格对齐校验、重试与 AI 运行追溯 |
+| `api-keys*.ts` | 个人模型 Key 的 AES-256-GCM 加密保存、接口域名/模型元数据和所有者隔离 |
+| `server-models.ts`、`ai*.ts`、`prompt-structures.ts`、`prompt-inspector.ts` | 教师/管理员统一模型配置、全账号安全目录与发送结构检查、统一排队/插队/轮转/冷却、连接测试、加密 Key、单句 AI 调用、全文 JSON 翻译/译后编辑及严格对齐校验、重试与 AI 运行追溯 |
 | `access.ts` | 项目、班级和工作空间的统一授权边界 |
 
 约束：新增跨用户查询必须通过管理员或项目管理者检查；Prompt 与译文版本只追加，不原地改写。

@@ -1,6 +1,6 @@
 /**
  * 职责: 使用统一服务器模型执行翻译、AI 译后编辑及项目任务书/Prompt 生成
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-queue.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
  * 依赖外部: Fetch API
  * 暴露: executeAiTranslation | executeFullTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | runConfiguredModel | testServerModelConnection | AiExecutionInput | FullTranslationInput | ProjectTextGenerationInput
  */
@@ -11,6 +11,8 @@ import { AppError } from '../errors.js';
 import { jsonText, newId, nowIso, sha256 } from '../shared.js';
 import { ensureAiPostEditAllowed, ensureProjectManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
+import { cancelAiQueueRequest, clearAiResourceCooldown, cooldownAiResource,
+  enqueueAiRequest } from './ai-queue.js';
 import { fullTranslationMessages, projectMessages, translationMessages } from './prompt-structures.js';
 import { listVisiblePrompts } from './prompts.js';
 import { resolveServerModel, type ResolvedServerModel } from './server-models.js';
@@ -251,11 +253,13 @@ async function callWithRetries(model: ResolvedServerModel, body: unknown, signal
   throw Object.assign(lastError, { attempts, latencyMs: Date.now() - started });
 }
 
-export async function runConfiguredModel(context: AppContext, body: unknown,
-  modelConfigId?: string, signal?: AbortSignal): Promise<ProviderResult & { modelConfigId: string; model: string }> {
+export async function runConfiguredModel(context: AppContext, user: AuthUser, requestId: string,
+  operation: string, body: unknown, modelConfigId?: string,
+  signal?: AbortSignal): Promise<ProviderResult & { modelConfigId: string; model: string }> {
   const model = resolveServerModel(context, modelConfigId);
   const payload = typeof body === 'object' && body !== null ? { ...body, model: model.model } : body;
-  const result = await callWithRetries(model, payload, signal);
+  const result = await enqueueAiRequest(user, requestId, operation, model.id,
+    () => callWithRetries(model, payload, signal));
   return { ...result, modelConfigId: model.id, model: model.model };
 }
 
@@ -461,7 +465,8 @@ export async function executeProjectTextGeneration(context: AppContext, user: Au
   const controller = new AbortController();
   activeProjectRuns.set(input.requestId, { projectId, controller });
   try {
-    const result = await callWithRetries(model, projectRequestBody(model, input), controller.signal);
+    const result = await enqueueAiRequest(user, input.requestId, input.operationType, model.id,
+      () => callWithRetries(model, projectRequestBody(model, input), controller.signal));
     finishProjectRun(context, runId, result);
     return { runId, content: result.content };
   } catch (error) {
@@ -473,8 +478,9 @@ export async function executeProjectTextGeneration(context: AppContext, user: Au
 export function cancelProjectTextGeneration(context: AppContext, user: AuthUser,
   projectId: string, requestId: string): boolean {
   ensureProjectManage(context, user, projectId);
+  const queued = cancelAiQueueRequest(user, requestId);
   const active = activeProjectRuns.get(requestId);
-  if (!active || active.projectId !== projectId) return false;
+  if (!active || active.projectId !== projectId) return queued;
   active.controller.abort();
   return true;
 }
@@ -496,7 +502,8 @@ export async function executeAiTranslation(context: AppContext, user: AuthUser, 
   const controller = new AbortController();
   activeTranslationRuns.set(input.requestId, { workspaceId, controller });
   try {
-    const result = await callWithRetries(model, requestBody(model, input, data), controller.signal);
+    const result = await enqueueAiRequest(user, input.requestId, input.kind, model.id,
+      () => callWithRetries(model, requestBody(model, input, data), controller.signal));
     context.db.prepare('UPDATE ai_runs SET attempt_count = ? WHERE id = ?').run(result.attempts, runId);
     const versionLinks = input.baseVersionId
       ? { parentVersionId: input.baseVersionId, baseVersionId: input.baseVersionId } : {};
@@ -531,7 +538,8 @@ async function executeNewFullTranslation(context: AppContext, user: AuthUser, wo
   const controller = new AbortController();
   activeTranslationRuns.set(input.requestId, { workspaceId, controller });
   try {
-    const result = await callWithRetries(model, fullRequestBody(model, data), controller.signal);
+    const result = await enqueueAiRequest(user, input.requestId, `full_${data.kind}`, model.id,
+      () => callWithRetries(model, fullRequestBody(model, data), controller.signal));
     let items: FullTranslationItem[];
     try { items = validateFullTranslation(result.content, data.segments); }
     catch (error) {
@@ -558,8 +566,9 @@ export async function executeFullTranslation(context: AppContext, user: AuthUser
 export function cancelAiTranslation(context: AppContext, user: AuthUser,
   workspaceId: string, requestId: string): boolean {
   ensureWorkspaceOwner(context, user, workspaceId);
+  const queued = cancelAiQueueRequest(user, requestId);
   const active = activeTranslationRuns.get(requestId);
-  if (!active || active.workspaceId !== workspaceId) return false;
+  if (!active || active.workspaceId !== workspaceId) return queued;
   active.controller.abort();
   return true;
 }
@@ -572,10 +581,12 @@ export async function testServerModelConnection(context: AppContext, user: AuthU
   ] };
   try {
     const result = await callWithRetries(model, body);
+    clearAiResourceCooldown(model.id);
     recordActivity(context, { eventType: 'server_model.connection_test_succeeded',
       actorUserId: user.id, metadata: { modelConfigId, latencyMs: result.latencyMs, attempts: result.attempts } });
     return { ok: true, model: model.model, latencyMs: result.latencyMs, attempts: result.attempts };
   } catch (error) {
+    cooldownAiResource(model.id);
     const providerError = error as ProviderError & { attempts?: number; latencyMs?: number };
     recordActivity(context, { eventType: 'server_model.connection_test_failed', actorUserId: user.id,
       metadata: { modelConfigId, errorCode: providerError.code, attempts: providerError.attempts || 1 } });
