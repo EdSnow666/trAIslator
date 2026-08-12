@@ -37,3 +37,8 @@ test('hidden 属性不会被按钮的 flex 或 grid 样式覆盖', () => {
   const css = readFileSync(new URL('../../styles/base.css', import.meta.url), 'utf8');
   assert.match(css, /\[hidden\]\s*{\s*display:\s*none\s*!important;/);
 });
+
+test('新建项目的 Prompt 继承选项同时显示项目、版本和名称', () => {
+  const source = readFileSync(new URL('../ui/dialogs.js', import.meta.url), 'utf8');
+  assert.match(source, /project\.name[\s\S]*promptLabel\(prompt\)[\s\S]*prompt\.title/);
+});

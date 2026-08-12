@@ -544,7 +544,7 @@ function inheritedBriefOptions() {
 function inheritedPromptOptions() {
   const options = inheritableProjects().map((project) => ({ project,
     prompt: project.prompts.find((item) => item.id === project.activePromptId) })).filter((item) => item.prompt);
-  return options.length ? options.map(({ project, prompt }) => `<option value="${prompt.id}">${escapeHtml(project.name)} · ${escapeHtml(promptLabel(prompt))}</option>`).join('')
+  return options.length ? options.map(({ project, prompt }) => `<option value="${prompt.id}">${escapeHtml(project.name)} · ${escapeHtml(promptLabel(prompt))} · ${escapeHtml(prompt.title || '未命名 Prompt')}</option>`).join('')
     : '<option value="">暂无可继承 Prompt</option>';
 }
 
