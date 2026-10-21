@@ -5,7 +5,7 @@
  * 暴露: runPromptCoach | confirmRunPromptCoach | resetPromptCoachPrompt | cancelPromptCoach
  */
 
-import { cancelServerProjectPromptCoach, loadPromptCoachSettings,
+import { cancelServerProjectPromptCoach, loadPromptCoachSettings, refreshServerProject,
   runServerProjectPromptCoach } from '../services/server-data.js';
 import { store } from '../state/store.js';
 import { dialogs, showToast } from './dialogs.js';
@@ -46,7 +46,10 @@ async function executeProjectCoach(input, requestId, controller) {
     dialogs.updatePromptCoachProgress('正在从已确认 Diff 提炼可复用结构规则');
     const result = await runServerProjectPromptCoach(input.ids,
       { requestId, signal: controller.signal, coachPrompt: input.coachPrompt });
-    store.setPromptCoachResult(result);
+    for (const project of input.projects) {
+      store.replaceServerProject(await refreshServerProject(project));
+    }
+    if (input.ids.includes(store.getProject().id)) store.setPromptCoachResult(result);
     dialogs.openResourceModal({ dataset: { tab: 'mentor' } });
     showToast('教练分析已完成');
   } catch (error) {

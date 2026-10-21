@@ -123,3 +123,10 @@
   min-height: 180px;
   resize: vertical;
 }
+
+.coach-history-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.coach-history-list { display: grid; gap: 10px; margin-bottom: 14px; }
+.coach-history-row { display: grid; gap: 6px; width: 100%; padding: 14px; text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.coach-history-row:hover { background: var(--surface-soft); }
+.coach-history-row small { color: var(--ink-soft); }
+.coach-history-prompt { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }

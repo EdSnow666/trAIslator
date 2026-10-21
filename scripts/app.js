@@ -27,6 +27,7 @@ import { openProjectManagementModal } from './ui/project-management.js';
 import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
+import { openCoachHistory, viewCoachHistory, downloadCoachHistory } from './ui/prompt-coach-history.js';
 import { initAiQueueStatus, prioritizeAiQueue } from './ui/ai-queue-status.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
 import { cancelPromptCoach, confirmRunPromptCoach, resetPromptCoachPrompt,
@@ -73,6 +74,9 @@ const actionHandlers = {
   'apply-coach-rules': applyCoachRules,
   'download-coach-json': downloadPromptCoachJson,
   'run-prompt-coach': runPromptCoach,
+  'open-coach-history': openCoachHistory,
+  'view-coach-history': viewCoachHistory,
+  'download-coach-history': downloadCoachHistory,
   'confirm-run-prompt-coach': confirmRunPromptCoach,
   'reset-prompt-coach-prompt': resetPromptCoachPrompt,
   'cancel-prompt-coach': cancelPromptCoach,

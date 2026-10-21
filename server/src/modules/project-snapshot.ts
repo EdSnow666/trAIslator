@@ -1,6 +1,6 @@
 /**
  * 职责: 将规范化数据库记录组装为现有 CAT 前端可直接消费的服务器项目快照
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ./access.ts, ./project-resources.ts, ./prompts.ts, ./translation-diffs.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ./access.ts, ./project-resources.ts, ./prompts.ts, ./translation-diffs.ts, ./prompt-coach-history.ts
  * 依赖外部: 无
  * 暴露: buildProjectSnapshot
  */
@@ -12,6 +12,7 @@ import { aiPostEditAllowed, ensureProjectView, ensureWorkspaceView } from './acc
 import { currentProjectBrief } from './project-resources.js';
 import { listVisiblePrompts } from './prompts.js';
 import { latestVersionDiff } from './translation-diffs.js';
+import { latestProjectCoachResult } from './prompt-coach-history.js';
 
 interface ProjectRow {
   id: string; name: string; direction: string; source_language: string;
@@ -334,5 +335,6 @@ export function buildProjectSnapshot(context: AppContext, user: AuthUser,
     editable: Boolean(workspaceId),
     canManage: canManageProject(context, user, projectId),
     aiPostEditAllowed: aiPostEditAllowed(context, user, projectId),
+    promptCoachResult: latestProjectCoachResult(context, user.id, projectId),
   };
 }

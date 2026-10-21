@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
+import { exerciseCoachHistory } from './prompt-coach-history-test-helpers.js';
 
 interface SessionSet { student: { cookie: string }; teacher: { cookie: string } }
 interface Scenario {
@@ -235,6 +236,7 @@ export async function exercisePromptCoach(app: FastifyInstance, sessions: Sessio
     headers: { cookie: sessions.teacher.cookie }, payload: { requestId: 'coach-class-001' } });
   assert.equal(wholeClass.statusCode, 201, wholeClass.body);
   assert.ok(wholeClass.json().summary.studentCount >= 1);
+  await exerciseCoachHistory(app, sessions, scenario);
   const submissions = await app.inject({ method: 'GET', url: '/api/teaching/submissions',
     headers: { cookie: sessions.teacher.cookie } });
   assert.ok(submissions.json().translations.some(

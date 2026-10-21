@@ -670,6 +670,7 @@ export function showToast(message) {
 }
 
 export const dialogs = {
+  modal,
   closeModal,
   closeDrawer,
   openVersionDrawer,

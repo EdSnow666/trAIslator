@@ -22,6 +22,7 @@ import { exerciseMigrationSafety, expireSessionsAndReadAdminHash,
   verifySessionLifetime } from './migration-safety-test-helpers.js';
 import { exerciseAdminAccountManagement, exerciseClassDissolveWithAssignment }
   from './teaching-lifecycle-test-helpers.js';
+import { verifyCoachHistoryAfterRestart } from './prompt-coach-history-test-helpers.js';
 interface Session { cookie: string; user: { mustChangePassword: boolean } } interface CreatedUser { id: string; password: string }
 interface TestSessions { admin: Session; teacher: Session; student: Session; outsider: Session; experiment: Session }
 interface ProjectScenario {
@@ -791,6 +792,7 @@ test('发布版后端完成身份、隔离、模型调用和版本事件闭环',
     await exercisePersonalKey(app, sessions.student.cookie);
     await exerciseAdminAccountManagement(app, sessions);
     await app.close();
+    await verifyCoachHistoryAfterRestart(databasePath, sessions, scenario);
     verifyDatabaseState(databasePath, scenario.projectId);
     const passwordHash = expireSessionsAndReadAdminHash(databasePath);
     const deployed = await runMigrationDeployment(databasePath, backupDir);

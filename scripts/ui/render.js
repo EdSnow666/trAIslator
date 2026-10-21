@@ -600,7 +600,7 @@ export function renderTmPanel(project) {
     <p class="muted" style="font-size:10px">当前为浏览器端预存匹配结果，未来可替换为 TMX 检索服务。</p>${cards || '<div class="empty-state">尚无翻译记忆</div>'}`;
 }
 
-export function renderMentorPanel(project) {
+export function renderMentorPanel(project, options = {}) {
   const analysis = project.promptCoachResult || analyzePromptCoach(project);
   const cards = analysis.rules.map(renderCoachRule).join('');
   const edited = analysis.summary?.traceCount ?? analysis.editedCount;
@@ -612,13 +612,14 @@ export function renderMentorPanel(project) {
     <div class="coach-mode"><span>${mode}</span><strong>Diff 成对学习</strong></div>
     <p class="coach-scope">${summary}<br>仅分析句界、谓语、施事、逻辑层级、回指和引语边界；术语差异不计入规则。</p>
     <div class="coach-rule-list">${cards || '<div class="empty-state">暂未发现可稳定归纳的句子结构规则。</div>'}</div>
-    <div class="coach-actions">
+    ${options.history ? '' : `<div class="coach-actions">
+      ${project.serverMode ? '<button class="button button-soft button-full" data-action="open-coach-history">历史运行记录</button>' : ''}
       ${cards ? '<button class="button button-primary button-full" data-action="apply-coach-rules">将已选规则加入 Prompt 草稿</button>' : ''}
       ${project.serverMode && project.editable ? '<button class="button button-secondary button-full" data-action="run-prompt-coach">运行 AI Prompt 教练</button>' : ''}
       ${edited ? '<button class="button button-soft button-full" data-action="download-coach-json">下载教练结果 JSON</button>' : ''}
       ${project.aiPostEditAllowed !== false ? '<button class="button button-soft button-full" data-action="download-post-edit-json">导出全部译后编辑 JSON</button>' : ''}
     </div>
-    <p class="coach-footnote">建议会先进入草稿供师生修改，只有发布后才创建新的 Prompt 版本。</p>`;
+    <p class="coach-footnote">建议会先进入草稿供师生修改，只有发布后才创建新的 Prompt 版本。</p>`}`;
 }
 
 function coachQualitySummary(summary) {
