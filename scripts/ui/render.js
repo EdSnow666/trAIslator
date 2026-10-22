@@ -653,7 +653,7 @@ function renderCoachEvidence(item) {
   if (!hasDiff) return '';
   const label = item.label || [item.projectName, item.submittedBy, item.segmentId].filter(Boolean).join(' · ');
   return `<div class="coach-evidence-item"><strong>${escapeHtml(label)} · ${escapeHtml(item.signal)}</strong>
-    <div class="coach-evidence-diff" aria-label="T2 AI 原译到人工编辑 Diff">${renderDiffParts(item.diff)}</div></div>`;
+    <div class="coach-evidence-diff" aria-label="机器基线到人工编辑 Diff">${renderDiffParts(item.diff)}</div></div>`;
 }
 
 function renderStatus(state) {

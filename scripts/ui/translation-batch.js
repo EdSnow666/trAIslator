@@ -9,7 +9,7 @@ import { store } from '../state/store.js';
 import { cancelServerAiTranslation, refreshServerProject,
   prepareServerPostEdit, runServerFullTranslation,
   updateServerTranslationStates } from '../services/server-data.js';
-import { clearTranslationDraft, getTranslationDraft } from '../services/translation-drafts.js';
+import { clearTranslationDraft, getPendingTranslationDraft } from '../services/translation-drafts.js';
 import { dialogs, showToast } from './dialogs.js';
 
 let activeBatch = null;
@@ -84,7 +84,7 @@ async function collectPendingDrafts(project, segmentIds) {
   for (const segment of selected) {
     const translation = store.getCurrentTranslation(segment);
     if (!translation) continue;
-    const draft = getTranslationDraft(project.id, segment.id, translation.id);
+    const draft = getPendingTranslationDraft(project, segment, translation);
     const saved = translation.postEditText || translation.aiText || '';
     if (draft === null || draft === saved) continue;
     edits.push(await prepareServerPostEdit(project, segment, translation, draft));

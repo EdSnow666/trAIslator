@@ -56,10 +56,19 @@ async function executeProjectCoach(input, requestId, controller) {
     dialogs.openResourceModal({ dataset: { tab: 'mentor' } });
     showToast('教练分析已完成');
   } catch (error) {
-    dialogs.closeModal();
-    if (controller.signal.aborted) showToast('AI Prompt 教练已取消，本次结果未写入。');
-    else showToast(`教练运行失败：${error.message}`);
+    if (controller.signal.aborted) {
+      dialogs.closeModal();
+      showToast('AI Prompt 教练已取消，本次结果未写入。');
+    } else {
+      dialogs.modal('AI Prompt 教练 · 运行未完成',
+        `<p role="alert">${escapeCoachError(error.message)}</p><p class="muted">原译、人工版本及 Diff 记录仍保留；如分析已完成，可从历史记录查看结果。</p>`,
+        '<button class="button button-ghost" data-action="close-modal">关闭</button><button class="button button-secondary" data-action="open-coach-history">历史运行记录</button><button class="button button-primary" data-action="run-prompt-coach">返回教练设置</button>');
+    }
   } finally { activeCoach = null; }
+}
+
+function escapeCoachError(value) {
+  return String(value || '运行未完成').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
 export function resetPromptCoachPrompt() { dialogs.resetPromptCoachPrompt(); }

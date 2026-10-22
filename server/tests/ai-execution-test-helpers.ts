@@ -221,6 +221,20 @@ export async function exercisePromptCoach(app: FastifyInstance, sessions: Sessio
     headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-personal-001' } });
   assert.equal(personal.statusCode, 201, personal.body);
   assert.ok(personal.json().rules[0].supportCount >= 1);
+  const snapshot = await app.inject({ method: 'GET',
+    url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.equal(snapshot.statusCode, 200, snapshot.body);
+  for (const evidence of personal.json().rules[0].evidence) {
+    const segment = snapshot.json().project.segments.find((item: { id: string }) => item.id === evidence.segmentId);
+    const human = segment.translations.find((item: { id: string }) => item.id === evidence.recordId);
+    assert.equal(human.serverVersionKind, 'human_post_edit');
+    assert.equal(human.aiText, evidence.aiText);
+    assert.equal(human.postEditText, evidence.postEditText);
+    assert.ok(segment.translations.some((item: { id: string }) => item.id === human.serverComparisonVersionId));
+    assert.notEqual(evidence.aiText, evidence.postEditText);
+    assert.ok(evidence.diff.length > 0);
+  }
   assert.equal(personal.json().schema, 'translation-aiducator.prompt-coach.v3');
   const inactiveCancel = await app.inject({ method: 'POST', url: `${personalUrl}/cancel`,
     headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-personal-001' } });

@@ -1,5 +1,5 @@
 /**
- * 职责: 基于现有 T2 AI 原译与人工译后编辑 Diff 提炼句子结构 Prompt 规则
+ * 职责: 基于独立人工编辑版本及其机器比较基线预览句子结构规则
  * 依赖内部: diff-engine.js
  * 依赖外部: 无
  * 暴露: analyzePromptCoach | buildPromptRuleAppendix | buildPromptCoachArtifact
@@ -37,12 +37,14 @@ function structuralStats(text) {
 }
 
 function getT2Samples(project) {
-  return project.segments.map((segment, index) => buildSample(segment, index))
+  return project.segments.flatMap((segment, index) => segment.translations
+    .filter((item) => item.serverVersionKind === 'human_post_edit'
+      || (!item.serverVersionKind && (item.postEditText || item.draftText)))
+    .map((translation) => buildSample(segment, index, translation)))
     .filter((item) => item.ai && item.edited && item.ai !== item.edited);
 }
 
-function buildSample(segment, index) {
-  const translation = segment.translations[1];
+function buildSample(segment, index, translation) {
   const pair = humanLearningPair(translation);
   return {
     id: segment.id,
@@ -129,7 +131,7 @@ function inferRules(samples) {
 export function analyzePromptCoach(project) {
   const samples = getT2Samples(project);
   return {
-    totalCount: project.segments.filter((segment) => segment.translations[1]).length,
+    totalCount: project.segments.filter((segment) => segment.translations.length).length,
     editedCount: samples.length,
     rules: inferRules(samples),
   };
@@ -137,7 +139,7 @@ export function analyzePromptCoach(project) {
 
 export function buildPromptRuleAppendix(rules) {
   const lines = rules.map((rule, index) => `${index + 1}. ${rule.instruction}`);
-  return `## 根据 T2 译后编辑新增的句子结构规则\n\n${lines.join('\n')}`;
+  return `## 根据人工译后编辑新增的句子结构规则\n\n${lines.join('\n')}`;
 }
 export function buildPromptCoachArtifact(project) {
   const analysis = analyzePromptCoach(project);

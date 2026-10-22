@@ -262,9 +262,12 @@ function normalizedRules(content: string, records: CoachRecord[]): EnrichedRule[
   const parsed = parseJson(content) as { rules?: ModelRule[] };
   if (!Array.isArray(parsed.rules)) throw new AppError(502, 'PROMPT_COACH_RULES_INVALID', 'AI Prompt 教练结果缺少规则列表。');
   const recordMap = new Map(records.map((record) => [record.recordId, record]));
-  return parsed.rules.map((rule, index) => enrichRule(rule, index, recordMap))
+  const rules = parsed.rules.map((rule, index) => enrichRule(rule, index, recordMap))
     .filter((rule): rule is EnrichedRule => Boolean(rule))
     .sort((left, right) => right.evidence.length - left.evidence.length);
+  if (parsed.rules.length && !rules.length) throw new AppError(502, 'PROMPT_COACH_EVIDENCE_INVALID',
+    '模型返回的规则未引用有效的修改记录，无法生成可核验结果。请重试或检查教练 Prompt。');
+  return rules;
 }
 
 function enrichRule(rule: ModelRule, index: number,

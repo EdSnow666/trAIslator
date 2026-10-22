@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { analyzePromptCoach } from '../services/prompt-coach.js';
 
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 const modalRoot = { innerHTML: '' };
@@ -57,4 +58,40 @@ test('加入规则先选目标，译后编辑草稿使用译后编辑基础内�
   project.aiPostEditAllowed = false;
   vm.runInContext('applyCoachRules();', context);
   assert.doesNotMatch(chooser, /data-prompt-kind="post_edit"/);
+});
+
+test('教练预览按独立人工版本学习，不依赖 T2 位置或当前显示版本', () => {
+  const raw = { id: 'raw', serverVersionKind: 'ai_translation', aiText: '项目进行了规划。' };
+  const human = { id: 'human', serverVersionKind: 'human_post_edit', serverParentVersionId: 'raw', aiText: raw.aiText, postEditText: '项目规划。' };
+  for (const translations of [[human, raw], [raw, { id: 'reference', serverVersionKind: 'manual_reference' }, human]]) {
+    const result = analyzePromptCoach({ segments: [{ id: 's', currentTranslationId: raw.id, translations }] });
+    assert.equal(result.editedCount, 1);
+    assert.equal(result.rules[0].evidence[0].aiText, raw.aiText);
+    assert.equal(result.rules[0].evidence[0].postEditText, human.postEditText);
+  }
+});
+
+test('教练运行失败保持错误窗口，不再直接关闭；成功显示结果窗口', async () => {
+  const source = readFileSync(new URL('../ui/prompt-coach-actions.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function executeProjectCoach(');
+  const end = source.indexOf('export function resetPromptCoachPrompt', start);
+  let failure = true; let resultWindow = 0; let closed = 0; let errorText = '';
+  const project = { id: 'p' };
+  const context = vm.createContext({ activeCoach: {},
+    confirmSelectedProjects: async () => {},
+    runServerProjectPromptCoach: async () => { if (failure) throw new Error('模型证据无效'); return { rules: [] }; },
+    refreshServerProject: async () => project,
+    store: { replaceServerProject() {}, getProject: () => project, setPromptCoachResult() {} },
+    dialogs: { updatePromptCoachProgress() {}, closeModal() { closed++; },
+      modal(_title, body) { errorText = body; }, openResourceModal() { resultWindow++; } },
+    showToast() {},
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const input = { projects: [project], ids: ['p'] }; const controller = { signal: { aborted: false } };
+  await context.executeProjectCoach(input, 'r', controller);
+  assert.equal(closed, 0);
+  assert.match(errorText, /模型证据无效/);
+  failure = false;
+  await context.executeProjectCoach(input, 'r2', controller);
+  assert.equal(resultWindow, 1);
 });
