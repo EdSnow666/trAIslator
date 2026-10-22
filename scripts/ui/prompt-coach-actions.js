@@ -27,7 +27,9 @@ function selectedCoachInput() {
   const ids = [...document.querySelectorAll('[data-coach-project]:checked')].map((item) => item.value);
   const projects = ids.map((id) => store.getState().projects.find((item) => item.id === id)).filter(Boolean);
   const coachPrompt = document.querySelector('#prompt-coach-instruction')?.value.trim() || '';
-  return { ids, projects, coachPrompt };
+  return { ids, projects, coachPrompt,
+    coachPromptVersionId: document.querySelector('#coach-prompt-version')?.value,
+    coachPromptTitle: document.querySelector('#coach-prompt-title')?.value.trim() };
 }
 
 export async function confirmRunPromptCoach() {
@@ -45,7 +47,8 @@ async function executeProjectCoach(input, requestId, controller) {
     await confirmSelectedProjects(input.projects);
     dialogs.updatePromptCoachProgress('正在从已确认 Diff 提炼可复用结构规则');
     const result = await runServerProjectPromptCoach(input.ids,
-      { requestId, signal: controller.signal, coachPrompt: input.coachPrompt });
+      { requestId, signal: controller.signal, coachPrompt: input.coachPrompt,
+        coachPromptVersionId: input.coachPromptVersionId, coachPromptTitle: input.coachPromptTitle });
     for (const project of input.projects) {
       store.replaceServerProject(await refreshServerProject(project));
     }

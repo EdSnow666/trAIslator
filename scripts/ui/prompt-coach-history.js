@@ -61,7 +61,8 @@ export async function viewCoachHistory(trigger) {
     if (serial !== requestSerial || !document.querySelector('[data-coach-history-loading]')) return;
     detail = run;
     const project = { ...store.getProject(), promptCoachResult: detail.result };
-    const prompt = detail.coachPrompt ? `<details><summary>本次教练 Prompt</summary><pre class="coach-history-prompt">${escapeHtml(detail.coachPrompt)}</pre></details>` : '';
+    const versionLabel = detail.coachPromptVersion ? `v${detail.coachPromptVersion.version} · ${detail.coachPromptVersion.title}` : '系统默认';
+    const prompt = detail.coachPrompt ? `<details><summary>本次教练 Prompt · ${escapeHtml(versionLabel)}</summary><pre class="coach-history-prompt">${escapeHtml(detail.coachPrompt)}</pre></details>` : '';
     dialogs.modal('教练运行详情', `<p>${escapeHtml(formatTime(detail.createdAt))}</p>${prompt}${renderMentorPanel(project, { history: true })}`,
       `<button class="button button-ghost" data-action="open-coach-history" data-scope="${scope}" data-offset="${offset}">返回记录</button>
       <button class="button button-secondary" data-action="download-coach-history">导出运行 JSON</button>`);

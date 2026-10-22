@@ -882,3 +882,9 @@
   text-align: center;
   font-size: 11px;
 }
+.translation-version-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 8px 0;
+}

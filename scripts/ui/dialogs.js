@@ -8,8 +8,8 @@
 import { store } from '../state/store.js';
 import { buildDiff } from '../services/diff-engine.js';
 import { resolveAiPostEdit } from '../services/ai-post-edit.js';
-import { translationSequenceNumber, visibleTranslationVersions } from '../services/translation-version-view.js';
-import { escapeHtml, renderMentorPanel, renderTermsPanel, renderTmPanel } from './render.js';
+import { translationSequenceNumber, visibleTranslationVersions, translationVersionLabel } from '../services/translation-version-view.js';
+import { escapeHtml, renderMentorPanel, renderTermsPanel, renderTmPanel, renderVersionLinks } from './render.js';
 
 const modalRoot = document.querySelector('#modal-root');
 let projectResourceCatalog = [];
@@ -90,11 +90,11 @@ function versionCard(project, segment, item) {
   const isCurrent = isSelectedBase && !hasAiVersion;
   const displayText = hasAiVersion ? item.aiText : (item.postEditText || item.aiText);
   const revision = hasAiVersion ? '<span class="muted" style="font-size:9px">原始译文版本，不显示 Diff</span>' : versionRevision(project, item);
-  return `<article class="version-card ${isCurrent ? 'is-current' : ''}">
-    <div class="version-meta"><strong>译文 T${index} · ${escapeHtml(versionSourceLabel(item, prompt))}</strong><span class="badge ${isCurrent ? 'badge-direction' : ''}">${item.submittedBy ? `已提交 · ${escapeHtml(item.submittedBy)}` : (isCurrent ? '当前显示' : item.createdAt)}</span></div>
+  return `<article class="version-card ${isCurrent ? 'is-current' : ''}" data-version-id="${escapeHtml(item.id)}" tabindex="-1">
+    <div class="version-meta"><strong>${item.serverVersionKind === 'human_post_edit' ? '人工译后编辑' : '译文'} ${translationVersionLabel(item, segment.translations)} · ${escapeHtml(versionSourceLabel(item, prompt))}</strong><span class="badge ${isCurrent ? 'badge-direction' : ''}">${item.submittedBy ? `已提交 · ${escapeHtml(item.submittedBy)}` : (isCurrent ? '当前显示' : item.createdAt)}</span></div>
     <p class="muted" style="font-size:9px">${escapeHtml(item.author)} · ${escapeHtml(item.model)}</p>
     <div class="version-text">${escapeHtml(displayText)}</div>
-    ${revision}${drawerBaseVersionAction(segment, item, isCurrent, hasAiVersion)}
+    ${revision}${renderVersionLinks(segment, item)}${drawerBaseVersionAction(segment, item, isCurrent, hasAiVersion)}
     ${versionPromptSnapshot(item)}
   </article>`;
 }
@@ -114,11 +114,11 @@ function aiPostEditVersionCard(project, segment, item) {
   const aiDiff = drawerVersionDiff(project, 'AI → AI编辑 Diff', edit.baseText, aiEdited, 'AI 编辑结果与原译一致', 'ai-edit');
   const humanDiff = drawerVersionDiff(project, 'AI编辑Diff → 人工 Diff', aiEdited, humanText, '尚无额外人工修改');
   const action = isCurrent ? '' : drawerAiVersionAction(segment, item);
-  return `<article class="version-card is-ai-post-edit-version ${isCurrent ? 'is-current' : ''}">
+  return `<article class="version-card is-ai-post-edit-version ${isCurrent ? 'is-current' : ''}" data-version-id="${escapeHtml(item.id)}" tabindex="-1">
     <div class="version-meta"><strong>AI 译后编辑版本 · T${index}-AI</strong><span class="badge badge-direction">${isCurrent ? '当前显示' : 'AI 译后编辑'}</span></div>
     <p class="muted" style="font-size:9px">Prompt ${escapeHtml(edit.promptLabel)} · ${escapeHtml(edit.promptTitle)} · ${escapeHtml(edit.model)} · ${escapeHtml(edit.createdAt)}</p>
     <div class="version-text">${escapeHtml(humanText)}</div>
-    ${aiDiff}${humanDiff}${action}
+    ${aiDiff}${humanDiff}${renderVersionLinks(segment, item)}${action}
     <details style="margin-top:12px"><summary class="text-button" style="cursor:pointer">查看绑定的完整 Prompt 快照</summary><div class="prompt-snapshot">${escapeHtml(edit.promptSnapshot)}</div></details>
   </article>`;
 }
@@ -472,6 +472,39 @@ function updateTranslationProgress(completed, total, label = '') {
 }
 
 let promptCoachDefault = '';
+let coachPromptVersionSettings = null;
+
+function coachPromptVersionFields(settings) {
+  const active = settings.activeVersionId || 'default';
+  const versions = (settings.versions || []).map((version) => `<option value="${escapeHtml(version.id)}"${version.id === active ? ' selected' : ''}>v${version.version} · ${escapeHtml(version.title)}${version.id === active ? ' · 当前使用' : ''}</option>`).join('');
+  const current = settings.versions?.find((version) => version.id === active);
+  return `<div class="form-group"><label for="coach-prompt-version">教练 Prompt 版本</label>
+    <select id="coach-prompt-version" class="field field-full"><option value="default"${active === 'default' ? ' selected' : ''}>系统默认${active === 'default' ? ' · 当前使用' : ''}</option>${versions}</select>
+    <button class="button button-soft" data-action="activate-coach-prompt-version">设为当前使用</button>
+    <p class="muted">选择版本查看并编辑内容；修改后保存为新版本。</p></div>
+    <div class="form-group"><label for="coach-prompt-title">新版本名称</label><input id="coach-prompt-title" class="field field-full" maxlength="120" value="${escapeHtml(current?.title || '')}" placeholder="可选，留空自动命名"></div>`;
+}
+
+function copyCoachPromptVersion() {
+  const id = modalRoot.querySelector('#coach-prompt-version')?.value;
+  const version = coachPromptVersionSettings?.versions?.find((item) => item.id === id);
+  const field = modalRoot.querySelector('#prompt-coach-instruction');
+  if (field) field.value = version?.content || promptCoachDefault;
+  const title = modalRoot.querySelector('#coach-prompt-title');
+  if (title) title.value = version?.title || '';
+  const label = modalRoot.querySelector('[data-coach-prompt-source]');
+  if (label) label.textContent = version ? `正在查看 v${version.version} · ${version.title}` : '正在查看系统默认 Prompt';
+}
+
+function updateCoachVersionSettings(settings) {
+  coachPromptVersionSettings = settings;
+  promptCoachDefault = settings.defaultPrompt;
+  const root = modalRoot.querySelector('[data-coach-version-fields]');
+  if (root) root.innerHTML = coachPromptVersionFields(settings);
+  copyCoachPromptVersion();
+  const label = modalRoot.querySelector('[data-coach-prompt-source]');
+  if (label) label.textContent = `当前使用：${settings.activeVersionId === 'default' ? '系统默认' : `v${settings.versions.find((item) => item.id === settings.activeVersionId)?.version}`}`;
+}
 
 function promptCoachProjectOption(project, currentId) {
   const checked = project.id === currentId ? ' checked' : '';
@@ -482,10 +515,12 @@ function promptCoachProjectOption(project, currentId) {
 
 function openPromptCoachSetup(projects, settings, currentId, options = {}) {
   promptCoachDefault = settings.defaultPrompt;
+  coachPromptVersionSettings = settings;
   const projectOptions = projects.map((project) => promptCoachProjectOption(project, currentId)).join('');
   const source = settings.customPrompt ? '当前使用自定义 Prompt' : '当前使用系统默认 Prompt';
   const body = `<p class="muted">选择 1 至 20 个项目。系统只读取当前账号在这些项目中已确认的 AI 原译 → 人工修改 Diff。</p>
     <div class="form-group"><label>项目范围</label><div class="prompt-coach-projects">${projectOptions}</div></div>
+    <div data-coach-version-fields>${coachPromptVersionFields(settings)}</div>
     <div class="form-group"><label for="prompt-coach-instruction">AI 教练 Prompt</label>
       <textarea id="prompt-coach-instruction" class="field field-full prompt-long-editor">${escapeHtml(settings.effectivePrompt)}</textarea>
       <p class="muted" data-coach-prompt-source>${source}；保存后供当前账号后续运行使用。</p></div>
@@ -494,12 +529,16 @@ function openPromptCoachSetup(projects, settings, currentId, options = {}) {
     <button class="text-button" data-action="cancel-coach-instruction" hidden>取消生成</button>`;
   const footer = '<button class="button button-ghost" data-action="reset-prompt-coach-prompt">恢复默认</button>'
     + '<button class="button button-ghost" data-action="close-modal">取消</button>'
-    + '<button class="button button-secondary" data-action="save-coach-prompt">保存 Prompt</button>'
+    + '<button class="button button-secondary" data-action="save-coach-prompt">保存新版本</button>'
     + (options.editorOnly ? '' : '<button class="button button-primary" data-action="confirm-run-prompt-coach">运行教练</button>');
   modal(options.editorOnly ? '编辑 AI 教练 Prompt' : 'AI Prompt 教练 · 项目与 Prompt', body, footer);
 }
 
 function resetPromptCoachPrompt() {
+  const select = modalRoot.querySelector('#coach-prompt-version');
+  if (select) select.value = 'default';
+  const title = modalRoot.querySelector('#coach-prompt-title');
+  if (title) title.value = '';
   const field = modalRoot.querySelector('#prompt-coach-instruction');
   if (field) field.value = promptCoachDefault;
   const source = modalRoot.querySelector('[data-coach-prompt-source]');
@@ -697,6 +736,8 @@ export const dialogs = {
   openPromptCoachProgress,
   updatePromptCoachProgress,
   openPromptCoachSetup,
+  copyCoachPromptVersion,
+  updateCoachVersionSettings,
   resetPromptCoachPrompt,
   openImportModal,
   updateProjectSetupVisibility,

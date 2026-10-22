@@ -307,7 +307,8 @@ export async function runServerProjectPromptCoach(projectIds, options = {}) {
   return apiRequest('/api/prompt-coach/projects', {
     method: 'POST', body: JSON.stringify({ projectIds, requestId: options.requestId
       || `prompt-coach-projects-${crypto.randomUUID()}`, modelConfigId: options.modelConfigId,
-    coachPrompt: options.coachPrompt }), signal: options.signal,
+    coachPrompt: options.coachPrompt, coachPromptVersionId: options.coachPromptVersionId,
+    coachPromptTitle: options.coachPromptTitle }), signal: options.signal,
   });
 }
 export async function cancelServerProjectPromptCoach(runRequestId) {

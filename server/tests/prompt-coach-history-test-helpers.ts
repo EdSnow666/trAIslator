@@ -24,6 +24,8 @@ export async function exerciseCoachHistory(app: FastifyInstance, sessions: Sessi
   assert.equal(detail.statusCode, 200, detail.body);
   assert.ok(detail.json().result.rules.length > 0);
   assert.ok(detail.json().inputSnapshot.length > 0);
+  assert.ok(detail.json().coachPromptVersionId);
+  assert.equal(detail.json().coachPromptVersionId, detail.json().result.coachPromptVersionId);
   const forbidden = await app.inject({ method: 'GET', url: `/api/prompt-coach/history/${latestId}`,
     headers: { cookie: sessions.teacher.cookie } });
   assert.equal(forbidden.statusCode, 404);

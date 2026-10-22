@@ -52,10 +52,15 @@ export function listCoachHistory(context: AppContext, user: AuthUser,
 
 export function coachHistoryDetail(context: AppContext, user: AuthUser, id: string): unknown {
   const row = context.db.prepare(`SELECT id, created_at AS createdAt,
+    coach_prompt_version_id AS coachPromptVersionId,
     coach_prompt_text AS coachPrompt, input_snapshot_json AS inputSnapshot,
     result_json AS result FROM prompt_coach_runs WHERE id = ? AND actor_user_id = ?`)
     .get(id, user.id) as { id: string; createdAt: string; coachPrompt: string | null;
       inputSnapshot: string; result: string } | undefined;
   if (!row) throw new AppError(404, 'COACH_HISTORY_NOT_FOUND', '教练运行记录不存在。');
-  return { ...row, inputSnapshot: JSON.parse(row.inputSnapshot), result: JSON.parse(row.result) };
+  const version = context.db.prepare(`SELECT version_number AS version,title FROM coach_prompt_versions
+    WHERE id=(SELECT coach_prompt_version_id FROM prompt_coach_runs WHERE id=?)`)
+    .get(id) as { version: number; title: string } | undefined;
+  return { ...row, coachPromptVersion: version || null,
+    inputSnapshot: JSON.parse(row.inputSnapshot), result: JSON.parse(row.result) };
 }

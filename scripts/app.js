@@ -28,7 +28,7 @@ import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
 import { openCoachHistory, viewCoachHistory, downloadCoachHistory } from './ui/prompt-coach-history.js';
-import { openCoachPromptEditor, saveCoachPrompt, generateCoachInstruction, cancelCoachInstruction } from './ui/coach-prompt-editor.js';
+import { openCoachPromptEditor, saveCoachPrompt, activateCoachPromptVersion, generateCoachInstruction, cancelCoachInstruction } from './ui/coach-prompt-editor.js';
 import { initAiQueueStatus, prioritizeAiQueue } from './ui/ai-queue-status.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
 import { cancelPromptCoach, confirmRunPromptCoach, resetPromptCoachPrompt,
@@ -55,6 +55,7 @@ const actionHandlers = {
   'unpublish-prompt': unpublishPrompt,
   'save-segment': saveSegment,
   'open-versions': openVersions,
+  'open-linked-version': openLinkedVersion,
   'new-prompt-from-editor': promptFromEditor,
   'retranslate-with-prompt': retranslateWithPrompt,
   'save-prompt-version': savePromptVersion,
@@ -76,6 +77,7 @@ const actionHandlers = {
   'confirm-coach-rule-target': confirmCoachRuleTarget,
   'open-coach-prompt-editor': openCoachPromptEditor,
   'save-coach-prompt': saveCoachPrompt,
+  'activate-coach-prompt-version': activateCoachPromptVersion,
   'generate-coach-instruction': generateCoachInstruction,
   'cancel-coach-instruction': cancelCoachInstruction,
   'download-coach-json': downloadPromptCoachJson,
@@ -609,7 +611,19 @@ function focusSegmentEditor(segmentId) {
   document.querySelector(selector)?.focus();
 }
 
+function openLinkedVersion(trigger) {
+  const segment = store.getSegment(trigger.dataset.segmentId);
+  const item = segment?.translations.find((version) => version.id === trigger.dataset.translationId);
+  if (!item) return;
+  store.selectTranslationDetails(segment.id, item.id);
+  dialogs.openVersionDrawer(segment.id);
+  const target = [...document.querySelectorAll('[data-version-id]')].find((node) => node.dataset.versionId === item.id);
+  target?.scrollIntoView({ block: 'center' });
+  target?.focus({ preventScroll: true });
+}
+
 function handleModalChange(event) {
+  if (event.target.id === 'coach-prompt-version') return dialogs.copyCoachPromptVersion();
   const resourceFields = ['import-brief-mode', 'import-prompt-mode', 'import-brief-version',
     'import-prompt-version', 'prompt-use-base', 'prompt-base-version'];
   if (resourceFields.includes(event.target.id)) {

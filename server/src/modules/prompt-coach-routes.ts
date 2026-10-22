@@ -10,7 +10,7 @@ import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { coachHistoryDetail, listCoachHistory } from './prompt-coach-history.js';
 import { cancelClassPromptCoach, cancelProjectPromptCoach, cancelWorkspacePromptCoach,
-  getPromptCoachSettings, updatePromptCoachSettings, generatePromptCoachInstruction, runClassPromptCoach, runProjectPromptCoach,
+  getPromptCoachSettings, updatePromptCoachSettings, selectPromptCoachVersion, generatePromptCoachInstruction, runClassPromptCoach, runProjectPromptCoach,
   runWorkspacePromptCoach, type ProjectPromptCoachInput, type PromptCoachInput } from './prompt-coach.js';
 
 interface WorkspaceParams { workspaceId: string }
@@ -27,9 +27,12 @@ export function registerPromptCoachRoutes(app: FastifyInstance, context: AppCont
   app.get('/api/prompt-coach/settings', { preHandler: requireReadyAccount }, async (request) => (
     getPromptCoachSettings(context, request.authUser!.id)
   ));
-  app.put<{ Body: { coachPrompt: string } }>('/api/prompt-coach/settings',
+  app.put<{ Body: { coachPrompt: string; title?: string; parentVersionId?: string } }>('/api/prompt-coach/settings',
     { preHandler: requireReadyAccount }, async (request) => updatePromptCoachSettings(
-      context, request.authUser!, request.body.coachPrompt));
+      context, request.authUser!, request.body.coachPrompt, request.body));
+  app.post<{ Params: { versionId: string } }>('/api/prompt-coach/versions/:versionId/activate',
+    { preHandler: requireReadyAccount }, async (request) => selectPromptCoachVersion(
+      context, request.authUser!, request.params.versionId));
   app.post<{ Body: ProjectPromptCoachInput }>('/api/prompt-coach/instruction/generate',
     { preHandler: requireReadyAccount }, async (request) => generatePromptCoachInstruction(
       context, request.authUser!, request.body));

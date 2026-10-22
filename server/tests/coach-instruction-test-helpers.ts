@@ -31,18 +31,30 @@ export async function exerciseCoachInstruction(app: FastifyInstance, sessions: S
   assert.equal(unchanged.json().customPrompt, saved.json().customPrompt);
   const repeated = await app.inject({ method: 'POST', url: '/api/prompt-coach/instruction/generate', headers, payload });
   assert.equal(repeated.json().content, generated.json().content);
-  await assertGeneratedPromptSave(app, headers, generated.json().content);
+  await assertGeneratedPromptSave(app, headers, generated.json().content, sessions.teacher.cookie);
   const denied = await app.inject({ method: 'POST', url: '/api/prompt-coach/instruction/generate',
     headers, payload: { projectIds: ['not-owned-project'], requestId: 'coach-instruction-denied' } });
   assert.equal(denied.statusCode, 403);
 }
 
 async function assertGeneratedPromptSave(app: FastifyInstance, headers: { cookie: string },
-  content: string): Promise<void> {
+  content: string, teacherCookie: string): Promise<void> {
+  const before = await app.inject({ method: 'GET', url: '/api/prompt-coach/settings', headers });
+  const oldId = before.json().activeVersionId;
   const saved = await app.inject({ method: 'PUT', url: '/api/prompt-coach/settings', headers,
-    payload: { coachPrompt: `${content}\n增加信息顺序分析。` } });
+    payload: { coachPrompt: `${content}\n增加信息顺序分析。`, title: '信息顺序优化', parentVersionId: oldId } });
   assert.equal(saved.statusCode, 200, saved.body);
   assert.match(saved.json().customPrompt, /增加信息顺序分析/);
+  assert.equal(saved.json().versions[0].parentVersionId, oldId);
+  assert.equal(saved.json().versions[0].title, '信息顺序优化');
+  const selected = await app.inject({ method: 'POST',
+    url: `/api/prompt-coach/versions/${oldId}/activate`, headers });
+  assert.equal(selected.statusCode, 200, selected.body);
+  assert.equal(selected.json().customPrompt, before.json().customPrompt);
+  assert.equal(selected.json().versions.length, saved.json().versions.length);
+  const denied = await app.inject({ method: 'POST', url: `/api/prompt-coach/versions/${oldId}/activate`,
+    headers: { cookie: teacherCookie } });
+  assert.equal(denied.statusCode, 404);
   const tooLong = await app.inject({ method: 'PUT', url: '/api/prompt-coach/settings', headers,
     payload: { coachPrompt: 'x'.repeat(8001) } });
   assert.equal(tooLong.statusCode, 400);

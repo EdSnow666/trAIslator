@@ -16,12 +16,15 @@ globalThis.document = { querySelector: () => modalRoot };
 const { dialogs } = await import('../ui/dialogs.js');
 
 test('独立教练编辑窗口提供保存和生成，运行窗口仍可运行', () => {
-  const settings = { defaultPrompt: '默认规则', effectivePrompt: '我的规则', customPrompt: '我的规则' };
+  const settings = { defaultPrompt: '默认规则', effectivePrompt: '我的规则', customPrompt: '我的规则',
+    activeVersionId: 'v1', versions: [{ id: 'v1', version: 1, title: '引语分析', content: '我的规则' }] };
   dialogs.openPromptCoachSetup([{ id: 'p', name: '项目', direction: 'EN → ZH' }], settings, 'p', { editorOnly: true });
   assert.match(modalRoot.innerHTML, /data-action="save-coach-prompt"/);
   assert.match(modalRoot.innerHTML, /data-action="generate-coach-instruction"/);
   assert.doesNotMatch(modalRoot.innerHTML, /data-action="confirm-run-prompt-coach"/);
   assert.match(modalRoot.innerHTML, /我的规则/);
+  assert.match(modalRoot.innerHTML, /v1 · 引语分析 · 当前使用/);
+  assert.match(modalRoot.innerHTML, /data-action="activate-coach-prompt-version"/);
   dialogs.openPromptCoachSetup([], settings, 'p');
   assert.match(modalRoot.innerHTML, /data-action="confirm-run-prompt-coach"/);
 });

@@ -2,7 +2,7 @@
  * 职责: 将当前项目状态渲染为 CAT 工作台、可复用资源面板与版本导航
  * 依赖内部: ../state/store.js, ../services/diff-engine.js, ../services/ai-post-edit.js, ../services/prompt-coach.js, ../services/translation-drafts.js, ../services/translation-version-view.js, ./ai-post-edit-view.js
  * 依赖外部: DOM API
- * 暴露: renderApp | escapeHtml | renderLiveDiff | renderAiHumanDiff | renderDiffParts | resizeTargetEditor
+ * 暴露: renderApp | escapeHtml | renderLiveDiff | renderAiHumanDiff | renderDiffParts | resizeTargetEditor | renderVersionLinks
  */
 
 import { store } from '../state/store.js';
@@ -11,7 +11,7 @@ import { buildDiff } from '../services/diff-engine.js';
 import { resolveAiPostEdit } from '../services/ai-post-edit.js';
 import { analyzePromptCoach } from '../services/prompt-coach.js';
 import { translationRootCount, translationSequenceNumber,
-  visibleTranslationVersions } from '../services/translation-version-view.js';
+  visibleTranslationVersions, translationVersionLabel, linkedTranslationVersions } from '../services/translation-version-view.js';
 import { hasVisibleAiPostEdit, renderAiPostEditField } from './ai-post-edit-view.js';
 
 const STATUS_TEXT = {
@@ -260,19 +260,18 @@ function currentTargetActions(segment, translation, prompt, aiVisible, aiEditing
     return `<div class="target-actions"><span class="version-current-label">尚无译文</span>
       <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}">更多</button></div>`;
   }
-  const index = translationSequenceNumber(translation, segment.translations);
-  const label = translation?.aiPostEdit ? `T${index}-AI`
+  const label = ['ai_post_edit', 'human_post_edit'].includes(translation.serverVersionKind) ? translationVersionLabel(translation, segment.translations)
     : (isManualTranslation(translation) ? '人工参考' : promptLabel(prompt));
   const actions = aiVisible && !aiEditing ? renderAiPostEditActions(segment, translation) : `<span class="target-action-buttons">
     <button class="save-segment-button" data-action="save-segment" data-segment-id="${segment.id}">${manualSaveLabel()}</button>
     <button class="more-button" data-action="open-right-tab" data-tab="prompt" data-segment-id="${segment.id}" data-translation-id="${translation?.id || ''}">更多</button></span>`;
-  return `<div class="target-actions"><button class="version-button" data-action="open-versions" data-segment-id="${segment.id}">${displayedVersionCount(segment)} 个版本 · ${label}</button>${actions}</div>`;
+  return `${renderVersionLinks(segment, translation)}<div class="target-actions"><button class="version-button" data-action="open-versions" data-segment-id="${segment.id}">${displayedVersionCount(segment)} 个版本 · ${label}</button>${actions}</div>`;
 }
 function manualSaveLabel() {
   return store.getProject().aiPostEditAllowed === false ? '保存人工编辑' : '保存译后编辑';
 }
 function displayedVersionCount(segment) {
-  return translationRootCount(segment.translations);
+  return visibleTranslationVersions(segment).length;
 }
 function renderAiPostEditActions(segment, translation) {
   return `<span class="ai-post-edit-actions">
@@ -305,7 +304,6 @@ function versionTarget(state, project, segment, index, translation) {
   const isSelectedBase = translation.id === segment.currentTranslationId;
   const hasAiVersion = hasPairedAiVersion(translation);
   const isCurrent = isSelectedBase && !hasAiVersion;
-  const translationIndex = translationSequenceNumber(translation, segment.translations);
   const prompt = store.getPrompt(translation.promptId);
   const savedTarget = hasAiVersion ? translation.aiText : (translation.postEditText || translation.aiText || '');
   const cached = isCurrent ? getTranslationDraft(project.id, segment.id, translation.id) : null;
@@ -316,8 +314,8 @@ function versionTarget(state, project, segment, index, translation) {
     ? aiPostEditTraceDiffChain(translation, project.direction, target, isCurrent ? segment.id : '')
     : (showDiff ? translationDiff(translation, target, project.direction, isCurrent ? segment.id : '') : '');
   return `<section class="embedded-version ${isCurrent ? 'is-current' : ''}">
-    <div class="embedded-version-header"><strong>译文 T${translationIndex} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${translationSubmissionLabel(translation, isCurrent)}</span></div>
-    ${editor}${diff}${versionActions(segment, translation, isCurrent, hasAiVersion)}
+    <div class="embedded-version-header"><strong>${translation.serverVersionKind === 'human_post_edit' ? '人工译后编辑' : '译文'} ${translationVersionLabel(translation, segment.translations)} · ${escapeHtml(translationSourceLabel(translation, prompt))}</strong><span>${translationSubmissionLabel(translation, isCurrent)}</span></div>
+    ${editor}${diff}${renderVersionLinks(segment, translation)}${versionActions(segment, translation, isCurrent, hasAiVersion)}
   </section>`;
 }
 
@@ -360,8 +358,17 @@ function aiPostEditVersionTarget(project, segment, index, translation) {
   return `<section class="embedded-version is-ai-post-edit-version ${isCurrent ? 'is-current' : ''}">
     <div class="embedded-version-header"><strong>AI 译后编辑版本 · T${translationIndex}-AI</strong><span>${isCurrent ? '当前版本' : translation.aiPostEdit.createdAt}</span></div>
     ${editor}${aiPostEditDiffChain(translation, project.direction, humanOverride, isCurrent ? segment.id : '')}
+    ${renderVersionLinks(segment, translation)}
     ${actions}
   </section>`;
+}
+
+export function renderVersionLinks(segment, translation) {
+  const links = linkedTranslationVersions(segment, translation).filter(({ item }) =>
+    store.getProject().aiPostEditAllowed !== false || item.serverVersionKind !== 'ai_post_edit');
+  if (!links.length) return '';
+  return `<nav class="translation-version-links" aria-label="关联译文版本">${links.map(({ item, relation }) =>
+    `<button class="text-button" data-action="open-linked-version" data-segment-id="${escapeHtml(segment.id)}" data-translation-id="${escapeHtml(item.id)}">${relation}：${escapeHtml(translationVersionLabel(item, segment.translations))}</button>`).join('')}</nav>`;
 }
 
 function aiVersionEditor(project, segment, index, translation, isCurrent, draft) {

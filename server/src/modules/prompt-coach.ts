@@ -1,6 +1,6 @@
 /**
  * 职责: 从已确认个人 Diff 或全班已提交 Diff 运行并持久化 AI Prompt 教练
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./ai-queue.ts, ./coach-prompt-generator.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./ai-queue.ts, ./coach-prompt-generator.ts, ./coach-prompt-versions.ts
  * 依赖外部: 无
  * 暴露: 个人/多项目/全班 Prompt Coach 运行、取消、设置保存、教练指令生成与后台消息快照
  */
@@ -14,8 +14,13 @@ import { recordActivity } from './activity.js';
 import { runConfiguredModel } from './ai-execution.js';
 import { cancelAiQueueRequest } from './ai-queue.js';
 import { generateCoachInstruction, coachInstructionMessages } from './coach-prompt-generator.js';
+import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
+  activateCoachPromptVersion, type CoachVersionInput } from './coach-prompt-versions.js';
 
-export interface PromptCoachInput { requestId: string; modelConfigId?: string; coachPrompt?: string }
+export interface PromptCoachInput {
+  requestId: string; modelConfigId?: string; coachPrompt?: string;
+  coachPromptVersionId?: string; coachPromptTitle?: string;
+}
 export interface ProjectPromptCoachInput extends PromptCoachInput { projectIds: string[] }
 interface CoachRecord {
   recordId: string; projectId: string; projectName: string; workspaceId: string;
@@ -32,7 +37,7 @@ interface EnrichedRule {
 }
 type CoachScope = 'workspace' | 'class' | 'projects';
 interface ActiveCoachRun { scopeType: CoachScope; scopeId: string; controller: AbortController }
-interface CoachPrompt { text: string; source: 'default' | 'custom' }
+interface CoachPrompt { text: string; source: 'default' | 'custom'; versionId: string | null }
 const activeCoachRuns = new Map<string, ActiveCoachRun>();
 
 export const DEFAULT_COACH_PROMPT = `请从人工对 AI 译文的修改中总结可复用的中文句子结构规则。忽略术语、专名拼写、纯标点、事实修正和孤立词汇偏好。先逐条识别结构操作，再合并重叠案例并抽象为通用规则。优先归入谓语压缩、修饰语或从句重组、信息顺序、语态与施事、拆句与合句、衔接与回指、名词化与动词化等类别。优先保留至少有两个案例支持的规则；单一案例只能作为候选，不要把具体原文短语误写成通用规则。`;
@@ -46,15 +51,14 @@ function parseJson(value: string): unknown {
 }
 
 function storedCoachPrompt(context: AppContext, userId: string): string | null {
-  const row = context.db.prepare(`SELECT custom_prompt AS customPrompt
-    FROM prompt_coach_preferences WHERE user_id = ?`).get(userId) as
-    { customPrompt: string | null } | undefined;
-  return row?.customPrompt?.trim() || null;
+  return activeCoachPrompt(context, userId)?.content || null;
 }
 
 export function getPromptCoachSettings(context: AppContext, userId: string): unknown {
   const customPrompt = storedCoachPrompt(context, userId);
   return { defaultPrompt: DEFAULT_COACH_PROMPT, customPrompt,
+    activeVersionId: activeCoachPrompt(context, userId)?.id || 'default',
+    versions: coachPromptVersions(context, userId),
     effectivePrompt: customPrompt || DEFAULT_COACH_PROMPT };
 }
 
@@ -65,22 +69,28 @@ function validatedCoachPrompt(value: string): string {
   return prompt;
 }
 
-function saveCoachPrompt(context: AppContext, userId: string, prompt: string): void {
+function saveCoachPrompt(context: AppContext, userId: string, prompt: string,
+  input: CoachVersionInput = {}): string | null {
   if (!prompt || prompt === DEFAULT_COACH_PROMPT) {
-    context.db.prepare('DELETE FROM prompt_coach_preferences WHERE user_id = ?').run(userId);
-    return;
+    activateCoachPromptVersion(context, userId, 'default');
+    return null;
   }
-  context.db.prepare(`INSERT INTO prompt_coach_preferences (user_id, custom_prompt, updated_at)
-    VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
-      custom_prompt = excluded.custom_prompt, updated_at = excluded.updated_at`)
-    .run(userId, prompt, nowIso());
+  return saveCoachPromptVersion(context, userId, prompt, input);
 }
 
 export function updatePromptCoachSettings(context: AppContext, user: AuthUser,
-  value: unknown): unknown {
+  value: unknown, input: CoachVersionInput = {}): unknown {
   if (typeof value !== 'string') throw new AppError(400, 'COACH_PROMPT_REQUIRED', '请输入教练 Prompt。');
-  saveCoachPrompt(context, user.id, validatedCoachPrompt(value));
-  recordActivity(context, { eventType: 'prompt_coach.settings_saved', actorUserId: user.id });
+  const versionId = saveCoachPrompt(context, user.id, validatedCoachPrompt(value), input);
+  recordActivity(context, { eventType: 'prompt_coach.settings_saved', actorUserId: user.id,
+    metadata: { coachPromptVersionId: versionId } });
+  return getPromptCoachSettings(context, user.id);
+}
+
+export function selectPromptCoachVersion(context: AppContext, user: AuthUser, id: string): unknown {
+  activateCoachPromptVersion(context, user.id, id);
+  recordActivity(context, { eventType: 'prompt_coach.version_selected', actorUserId: user.id,
+    metadata: { coachPromptVersionId: id } });
   return getPromptCoachSettings(context, user.id);
 }
 
@@ -108,13 +118,22 @@ function effectiveCoachPrompt(context: AppContext, user: AuthUser,
   input: PromptCoachInput): CoachPrompt {
   if (typeof input.coachPrompt === 'string') {
     const prompt = validatedCoachPrompt(input.coachPrompt);
-    saveCoachPrompt(context, user.id, prompt);
+    const selected = input.coachPromptVersionId && input.coachPromptVersionId !== 'default'
+      ? coachPromptVersions(context, user.id).find((item) => item.id === input.coachPromptVersionId) : null;
+    if (input.coachPromptVersionId && input.coachPromptVersionId !== 'default' && !selected) {
+      throw new AppError(404, 'COACH_PROMPT_VERSION_NOT_FOUND', '教练 Prompt 版本不存在。');
+    }
+    const versionId = selected?.content === prompt ? selected.id : saveCoachPrompt(context, user.id, prompt,
+      { ...(input.coachPromptTitle ? { title: input.coachPromptTitle } : {}),
+        ...(input.coachPromptVersionId ? { parentVersionId: input.coachPromptVersionId } : {}) });
+    if (selected?.content === prompt) activateCoachPromptVersion(context, user.id, selected.id);
     return prompt && prompt !== DEFAULT_COACH_PROMPT
-      ? { text: prompt, source: 'custom' } : { text: DEFAULT_COACH_PROMPT, source: 'default' };
+      ? { text: prompt, source: 'custom', versionId }
+      : { text: DEFAULT_COACH_PROMPT, source: 'default', versionId: null };
   }
   const stored = storedCoachPrompt(context, user.id);
-  return stored ? { text: stored, source: 'custom' }
-    : { text: DEFAULT_COACH_PROMPT, source: 'default' };
+  return stored ? { text: stored, source: 'custom', versionId: activeCoachPrompt(context, user.id)?.id || null }
+    : { text: DEFAULT_COACH_PROMPT, source: 'default', versionId: null };
 }
 
 function workspaceProject(context: AppContext, workspaceId: string): string {
@@ -323,6 +342,7 @@ function coachResult(scopeType: string, scopeId: string, model: string,
     analysisMode: 'ai-diff-learning', focus: 'sentence-structure', ignored: ['terminology'],
     scope: { type: scopeType, id: scopeId, projectIds: projectIds || [] }, model,
     coachPromptSource: coachPrompt.source,
+    coachPromptVersionId: coachPrompt.versionId,
     summary: { traceCount: records.length, ruleCount: rules.length,
       reusableRuleCount: rules.filter((rule) => rule.supportTier === 'repeated').length,
       candidateRuleCount: rules.filter((rule) => rule.supportTier === 'candidate').length,
@@ -337,11 +357,11 @@ function saveCoachRun(context: AppContext, user: AuthUser, scopeType: string, sc
   context.db.prepare(`INSERT INTO prompt_coach_runs
     (id, scope_type, scope_id, project_id, actor_user_id, model_config_id, request_id,
       input_record_count, input_snapshot_json, selected_project_ids_json,
-      coach_prompt_text, coach_prompt_source, result_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      coach_prompt_text, coach_prompt_source, result_json, created_at, coach_prompt_version_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(newId(), scopeType, scopeId, projectId, user.id, modelConfigId, input.requestId,
       records.length, jsonText(records), projectIds ? jsonText(projectIds) : null,
-      coachPrompt.text, coachPrompt.source, jsonText(result), nowIso());
+      coachPrompt.text, coachPrompt.source, jsonText(result), nowIso(), coachPrompt.versionId);
   recordActivity(context, { eventType: `prompt_coach.${scopeType}_generated`, actorUserId: user.id,
     projectId, requestId: input.requestId,
     metadata: { scopeId, inputRecordCount: records.length } });
