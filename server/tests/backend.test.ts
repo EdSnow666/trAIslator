@@ -753,7 +753,8 @@ function assertPromptInspectorPayload(data: { operations: Array<{ id: string; me
   const promptCoach = data.operations.find((item) => item.id === 'prompt_coach')!;
   assert.match(promptCoach.messages[0]!.content, /prompt coach/i);
   const coachPayload = JSON.parse(promptCoach.messages[1]!.content);
-  assert.equal(coachPayload.focus, 'sentence-structure');
+  assert.equal('focus' in coachPayload, false);
+  assert.equal('ignored' in coachPayload, false);
   assert.equal(typeof coachPayload.coachInstruction, 'string');
   assert.ok(Array.isArray(coachPayload.records));
 }

@@ -18,8 +18,14 @@ interface Scenario {
 
 function mockCoachContent(messages: Array<{ content?: string }>): string {
   const payload = JSON.parse(messages[1]?.content || '{}') as
-    { records?: Array<{ recordId: string }> };
+    { coachInstruction?: string; records?: Array<{ recordId: string }> };
+  if (payload.coachInstruction === 'TEST_INVALID_EVIDENCE') return JSON.stringify({ rules: [
+    { id: 'bad', instruction: 'Invalid evidence', evidenceRecordIds: ['invented-id'] }] });
+  if (payload.coachInstruction === 'TEST_INVALID_JSON') return 'not JSON';
   const evidenceRecordIds = (payload.records || []).map((item) => item.recordId);
+  if (payload.coachInstruction?.includes('亲近')) return JSON.stringify({ rules: [{
+    id: 'warmth', category: 'warmth-and-restraint', title: '亲近而克制', instruction: '让亲近感从具体行动中流露。',
+    signal: '单例候选', evidenceRecordIds }] });
   return JSON.stringify({ rules: [{ id: 'finite-clause', title: '明确谓语核心',
     instruction: '优先使用边界明确的有限从句，避免松散的名词化堆叠。',
     signal: '人工修改集中重组了句子谓语与从句边界。', evidenceRecordIds }] });
@@ -55,7 +61,7 @@ function respondMockModel(request: IncomingMessage, response: ServerResponse): v
   request.on('end', () => {
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as
       { model?: string; messages?: Array<{ content?: string }> };
-    if (body.model === 'no-channel-model') {
+    if (body.model === 'no-channel-model' || body.messages?.[1]?.content?.includes('TEST_HTTP_ERROR')) {
       response.writeHead(503, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: { code: 'model_not_found',
         message: 'No available channel for model no-channel-model under group user.' } }));
@@ -246,13 +252,14 @@ export async function exercisePromptCoach(app: FastifyInstance, sessions: Sessio
   assert.equal(settings.json().customPrompt, null);
   const multi = await app.inject({ method: 'POST', url: '/api/prompt-coach/projects',
     headers: { cookie: sessions.student.cookie }, payload: { projectIds: [scenario.projectId],
-      coachPrompt: '只总结可复用的句子结构修改。', requestId: 'coach-projects-001' } });
+      coachPrompt: '只总结亲近、克制的风格，不分析句法。', requestId: 'coach-projects-001' } });
   assert.equal(multi.statusCode, 201, multi.body);
   assert.equal(multi.json().scope.type, 'projects');
   assert.equal(multi.json().coachPromptSource, 'custom');
+  assert.equal(multi.json().rules[0].category, 'warmth-and-restraint');
   const savedSettings = await app.inject({ method: 'GET', url: '/api/prompt-coach/settings',
     headers: { cookie: sessions.student.cookie } });
-  assert.equal(savedSettings.json().customPrompt, '只总结可复用的句子结构修改。');
+  assert.equal(savedSettings.json().customPrompt, '只总结亲近、克制的风格，不分析句法。');
   const wholeClass = await app.inject({ method: 'POST', url: `/api/classes/${scenario.classId}/prompt-coach`,
     headers: { cookie: sessions.teacher.cookie }, payload: { requestId: 'coach-class-001' } });
   assert.equal(wholeClass.statusCode, 201, wholeClass.body);

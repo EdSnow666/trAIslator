@@ -26,6 +26,15 @@ export async function exerciseCoachHistory(app: FastifyInstance, sessions: Sessi
   assert.ok(detail.json().inputSnapshot.length > 0);
   assert.ok(detail.json().coachPromptVersionId);
   assert.equal(detail.json().coachPromptVersionId, detail.json().result.coachPromptVersionId);
+  assert.deepEqual(detail.json().audit.map((e: { type: string }) => e.type), ['request', 'response', 'validation']);
+  const sent = detail.json().audit[0].payload.body;
+  assert.equal(typeof sent.model, 'string');
+  assert.equal(JSON.parse(sent.messages[1].content).coachInstruction, detail.json().coachPrompt);
+  assert.equal('focus' in JSON.parse(sent.messages[1].content), false);
+  assert.equal('ignored' in JSON.parse(sent.messages[1].content), false);
+  assert.ok(JSON.parse(detail.json().audit[1].payload.rawBody).choices[0].message.content);
+  assert.equal(detail.json().audit[2].payload.rules[0].accepted, true);
+  assert.doesNotMatch(JSON.stringify(detail.json().audit), /authorization|Bearer /i);
   const forbidden = await app.inject({ method: 'GET', url: `/api/prompt-coach/history/${latestId}`,
     headers: { cookie: sessions.teacher.cookie } });
   assert.equal(forbidden.statusCode, 404);
@@ -37,6 +46,29 @@ export async function exerciseCoachHistory(app: FastifyInstance, sessions: Sessi
   }
   const after = await app.inject({ method: 'GET', url, headers });
   assert.equal(after.json().total, 2);
+  for (const marker of ['TEST_INVALID_EVIDENCE', 'TEST_INVALID_JSON', 'TEST_HTTP_ERROR']) {
+    const requestId = `audit-${marker}`;
+    if (checkRetry) {
+      const failed = await app.inject({ method: 'POST', url: '/api/prompt-coach/projects', headers,
+        payload: { projectIds: [scenario.projectId], coachPrompt: marker, requestId } });
+      assert.equal(failed.statusCode, 502, failed.body);
+    }
+    const audit = await app.inject({ method: 'GET', url: `/api/prompt-coach/audit/${requestId}`, headers });
+    assert.equal(audit.statusCode, 200, audit.body);
+    const events = audit.json().audit;
+    if (marker === 'TEST_HTTP_ERROR') {
+      assert.equal(events.at(-1).type, 'error');
+      const responses = events.filter((e: { type: string }) => e.type === 'response');
+      assert.ok(responses.length > 0);
+      assert.equal(events.filter((e: { type: string }) => e.type === 'request').length, responses.length);
+      assert.ok(responses.every((e: { payload: { status: number; rawBody: string } }) => e.payload.status === 503 && e.payload.rawBody.includes('model_not_found')));
+    } else assert.deepEqual(events.map((e: { type: string }) => e.type), ['request', 'response', 'validation', 'error']);
+    const denied = await app.inject({ method: 'GET', url: `/api/prompt-coach/audit/${requestId}`,
+      headers: { cookie: sessions.teacher.cookie } });
+    assert.equal(denied.statusCode, 404);
+  }
+  const failedList = await app.inject({ method: 'GET', url, headers });
+  assert.equal(failedList.json().failedAttempts.length, 3);
   const invalid = await app.inject({ method: 'GET', url: '/api/prompt-coach/history?offset=-1', headers });
   assert.equal(invalid.statusCode, 400);
 }

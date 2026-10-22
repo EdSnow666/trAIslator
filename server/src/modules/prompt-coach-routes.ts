@@ -8,7 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
-import { coachHistoryDetail, listCoachHistory } from './prompt-coach-history.js';
+import { coachHistoryDetail, listCoachHistory, coachAttemptDetail } from './prompt-coach-history.js';
 import { cancelClassPromptCoach, cancelProjectPromptCoach, cancelWorkspacePromptCoach,
   getPromptCoachSettings, updatePromptCoachSettings, selectPromptCoachVersion, generatePromptCoachInstruction, runClassPromptCoach, runProjectPromptCoach,
   runWorkspacePromptCoach, type ProjectPromptCoachInput, type PromptCoachInput } from './prompt-coach.js';
@@ -18,6 +18,9 @@ interface ClassParams { classId: string }
 interface CancelBody { requestId: string }
 
 export function registerPromptCoachRoutes(app: FastifyInstance, context: AppContext): void {
+  app.get<{ Params: { requestId: string } }>('/api/prompt-coach/audit/:requestId',
+    { preHandler: requireReadyAccount }, async (request) => coachAttemptDetail(context,
+      request.authUser!, request.params.requestId));
   app.get<{ Querystring: { projectId?: string; offset?: string } }>('/api/prompt-coach/history',
     { preHandler: requireReadyAccount }, async (request) => listCoachHistory(context,
       request.authUser!, request.query.projectId, request.query.offset));

@@ -61,6 +61,10 @@ interface FullExecutionContext {
   customPrompt: string | null; terms: unknown[]; translationMemory: unknown[];
 }
 export interface ProviderResult { content: string; usage: unknown; attempts: number; latencyMs: number }
+export interface ModelObserver {
+  request(payload: { endpoint: string; modelConfigId: string; body: unknown }): void;
+  response(payload: { status: number; rawBody: string }): void;
+}
 interface ActiveProjectRun { projectId: string; controller: AbortController }
 const activeProjectRuns = new Map<string, ActiveProjectRun>();
 const activeTranslationRuns = new Map<string, { workspaceId: string; controller: AbortController }>();
@@ -208,23 +212,28 @@ function endpoint(baseUrl: string): string {
   return baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
 }
 
-async function callOnce(model: ResolvedServerModel, body: unknown, external?: AbortSignal): Promise<{ content: string; usage: unknown }> {
+async function callOnce(model: ResolvedServerModel, body: unknown, external?: AbortSignal,
+  observer?: ModelObserver): Promise<{ content: string; usage: unknown }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), model.requestTimeoutMs);
   const cancel = () => controller.abort();
   if (external?.aborted) controller.abort();
   else external?.addEventListener('abort', cancel, { once: true });
   try {
+    observer?.request({ endpoint: endpoint(model.baseUrl), modelConfigId: model.id, body });
     const response = await fetch(endpoint(model.baseUrl), { method: 'POST', signal: controller.signal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${model.apiKey}` },
       body: JSON.stringify(body) });
+    const rawBody = await response.text();
+    observer?.response({ status: response.status, rawBody });
     if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      let payload: { error?: { message?: string } } | null = null;
+      try { payload = JSON.parse(rawBody); } catch { /* 错误正文可能不是 JSON */ }
       const detail = payload?.error?.message?.slice(0, 300);
       const message = `模型服务返回 HTTP ${response.status}${detail ? `：${detail}` : '。'}`;
       throw new ProviderError(`PROVIDER_HTTP_${response.status}`, message, response.status >= 500);
     }
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
+    const payload = JSON.parse(rawBody) as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
     const content = payload.choices?.[0]?.message?.content?.trim();
     if (!content) throw new ProviderError('PROVIDER_EMPTY_OUTPUT', '模型服务没有返回译文。', false);
     return { content, usage: payload.usage || {} };
@@ -236,14 +245,15 @@ async function callOnce(model: ResolvedServerModel, body: unknown, external?: Ab
   } finally { clearTimeout(timeout); external?.removeEventListener('abort', cancel); }
 }
 
-async function callWithRetries(model: ResolvedServerModel, body: unknown, signal?: AbortSignal): Promise<ProviderResult> {
+async function callWithRetries(model: ResolvedServerModel, body: unknown, signal?: AbortSignal,
+  observer?: ModelObserver): Promise<ProviderResult> {
   const started = Date.now();
   let attempts = 0;
   let lastError = new ProviderError('PROVIDER_UNKNOWN', '模型调用失败。');
   for (let attempt = 1; attempt <= model.maxRetries + 1; attempt += 1) {
     attempts = attempt;
     try {
-      const result = await callOnce(model, body, signal);
+      const result = await callOnce(model, body, signal, observer);
       return { ...result, attempts, latencyMs: Date.now() - started };
     } catch (error) {
       lastError = error as ProviderError;
@@ -255,11 +265,11 @@ async function callWithRetries(model: ResolvedServerModel, body: unknown, signal
 
 export async function runConfiguredModel(context: AppContext, user: AuthUser, requestId: string,
   operation: string, body: unknown, modelConfigId?: string,
-  signal?: AbortSignal): Promise<ProviderResult & { modelConfigId: string; model: string }> {
+  signal?: AbortSignal, observer?: ModelObserver): Promise<ProviderResult & { modelConfigId: string; model: string }> {
   const model = resolveServerModel(context, modelConfigId);
   const payload = typeof body === 'object' && body !== null ? { ...body, model: model.model } : body;
   const result = await enqueueAiRequest(user, requestId, operation, model.id,
-    () => callWithRetries(model, payload, signal));
+    () => callWithRetries(model, payload, signal, observer));
   return { ...result, modelConfigId: model.id, model: model.model };
 }
 

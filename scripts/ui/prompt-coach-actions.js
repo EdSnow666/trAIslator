@@ -45,7 +45,7 @@ export async function confirmRunPromptCoach() {
 async function executeProjectCoach(input, requestId, controller) {
   try {
     await confirmSelectedProjects(input.projects);
-    dialogs.updatePromptCoachProgress('正在从已确认 Diff 提炼可复用结构规则');
+    dialogs.updatePromptCoachProgress('正在按教练 Prompt 分析已确认 Diff');
     const result = await runServerProjectPromptCoach(input.ids,
       { requestId, signal: controller.signal, coachPrompt: input.coachPrompt,
         coachPromptVersionId: input.coachPromptVersionId, coachPromptTitle: input.coachPromptTitle });

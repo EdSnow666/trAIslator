@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
+import { normalizedRules } from '../src/modules/prompt-coach.js';
+import { appendCoachAudit, coachAuditEvents } from '../src/modules/coach-audit.js';
 import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
   activateCoachPromptVersion } from '../src/modules/coach-prompt-versions.js';
 
@@ -65,5 +67,41 @@ test('切换旧版本后继续编辑仍递增编号，其他账号不能选择�
     assert.equal(coachPromptVersions(context, 'u1').length, 3);
     activateCoachPromptVersion(context, 'u1', nextId);
     assert.equal(activeCoachPrompt(context, 'u1')?.title, '引语优化');
+  } finally { context.db.close(); }
+});
+
+test('风格类别不受句法枚举限制，过滤记录保留无效证据和原因', () => {
+  const records = [{ recordId: 'r', projectId: 'p', projectName: '项目', workspaceId: 'w',
+    segmentId: 's', sourceText: 'Source', aiText: 'AI', postEditText: 'Human', diff: [] }];
+  let audit: any;
+  const rules = normalizedRules(JSON.stringify({ rules: [
+    { id: 'warm', category: 'warmth-and-rhythm', instruction: '让情感从动作中流露', evidenceRecordIds: ['r', 'fake', 'r'] },
+    { id: 'bad', instruction: '无效证据', evidenceRecordIds: ['fake'] },
+    { id: 'empty', instruction: ' ', evidenceRecordIds: ['r'] }, null,
+  ] }), records, (value) => { audit = value; });
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0]!.category, 'warmth-and-rhythm');
+  assert.equal(rules[0]!.supportCount, 1);
+  assert.deepEqual(audit.rules[0].invalidEvidenceIds, ['fake']);
+  assert.deepEqual(audit.rules[0].retainedEvidenceIds, ['r']);
+  assert.deepEqual(audit.rules[1].reasons, ['no_valid_evidence']);
+  assert.ok(audit.rules[2].reasons.includes('missing_instruction'));
+  assert.equal(audit.rules[3].accepted, false);
+  assert.deepEqual(normalizedRules('{"rules":[]}', records), []);
+  assert.throws(() => normalizedRules('not JSON', records, (v) => { audit = v; }), /有效 JSON/);
+  assert.equal(audit.formatValid, false);
+});
+
+test('教练审计追加不可变，按账号隔离且不改动旧历史', () => {
+  const context = legacyDatabase();
+  try {
+    context.db.exec(readFileSync('server/migrations/0016_coach_audit_events.sql', 'utf8'));
+    appendCoachAudit(context, 'u1', 'req', 'request', { body: { model: 'demo', messages: [] } });
+    appendCoachAudit(context, 'u1', 'req', 'response', { rawBody: 'not JSON', status: 200 });
+    assert.equal(coachAuditEvents(context, 'u1', 'req').length, 2);
+    assert.deepEqual(coachAuditEvents(context, 'u2', 'req'), []);
+    assert.throws(() => context.db.exec("UPDATE prompt_coach_audit_events SET request_id='other'"), /append only/);
+    assert.throws(() => context.db.exec('DELETE FROM prompt_coach_audit_events'), /append only/);
+    assert.equal((context.db.prepare('SELECT COUNT(*) AS n FROM prompt_coach_runs').get() as { n: number }).n, 3);
   } finally { context.db.close(); }
 });

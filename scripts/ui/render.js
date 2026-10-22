@@ -617,8 +617,8 @@ export function renderMentorPanel(project, options = {}) {
   const kicker = project.aiPostEditAllowed === false ? 'HUMAN EDIT LEARNING' : 'POST-EDIT LEARNING';
   return `<div class="panel-kicker">${kicker}</div><h2 class="panel-title">AI Prompt 教练</h2>
     <div class="coach-mode"><span>${mode}</span><strong>Diff 成对学习</strong></div>
-    <p class="coach-scope">${summary}<br>仅分析句界、谓语、施事、逻辑层级、回指和引语边界；术语差异不计入规则。</p>
-    <div class="coach-rule-list">${cards || '<div class="empty-state">暂未发现可稳定归纳的句子结构规则。</div>'}</div>
+    <p class="coach-scope">${summary}<br>分析方向、规则类别及排除项遵循本次教练 Prompt。</p>
+    <div class="coach-rule-list">${cards || '<div class="empty-state">本次暂无可复用规则，可在历史记录中查看实际请求与响应。</div>'}</div>
     ${options.history ? '' : `<div class="coach-actions">
       ${project.serverMode ? '<button class="button button-soft button-full" data-action="open-coach-prompt-editor">编辑教练 Prompt</button>' : ''}
       ${project.serverMode ? '<button class="button button-soft button-full" data-action="open-coach-history">历史运行记录</button>' : ''}
@@ -644,7 +644,7 @@ function renderCoachRule(rule, index) {
     <label class="coach-rule-select"><input type="checkbox" data-coach-rule="${escapeHtml(rule.id)}" checked>
       <span><small>规则 ${index + 1} · ${tier}</small><strong>${escapeHtml(rule.title)}</strong></span></label>
     <p>${escapeHtml(rule.instruction)}</p>
-    <details class="coach-evidence"><summary>查看结构依据 · ${rule.supportCount || rule.evidence.length} 处</summary>${evidence}</details>
+    <details class="coach-evidence"><summary>查看修改依据 · ${rule.supportCount || rule.evidence.length} 处</summary>${evidence}</details>
   </article>`;
 }
 

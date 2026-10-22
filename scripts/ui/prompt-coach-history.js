@@ -32,7 +32,8 @@ function listBody(data) {
     <button class="button ${scope === 'all' ? 'button-secondary' : 'button-ghost'}" data-action="open-coach-history" data-scope="all">我的全部记录</button><span>${data.total} 次运行</span></div>`;
   const pages = `<div class="coach-history-toolbar"><button class="button button-ghost" data-action="open-coach-history" data-offset="${offset - 50}" ${offset === 0 ? 'disabled' : ''}>上一页</button>
     <button class="button button-ghost" data-action="open-coach-history" data-offset="${offset + 50}" ${offset + 50 >= data.total ? 'disabled' : ''}>下一页</button></div>`;
-  return `${filters}<div class="coach-history-list">${data.runs.map(historyRow).join('') || '<p class="empty-state">暂无已完成的教练运行记录</p>'}</div>${data.total > 50 ? pages : ''}`;
+  const failures = (data.failedAttempts || []).map((item) => `<button class="coach-history-row" data-action="view-coach-history" data-request-id="${escapeHtml(item.requestId)}"><strong>${escapeHtml(formatTime(item.createdAt))} · 运行未完成</strong><small>查看实际请求、原始响应及校验原因</small></button>`).join('');
+  return `${filters}<div class="coach-history-list">${data.runs.map(historyRow).join('') || '<p class="empty-state">暂无已完成的教练运行记录</p>'}</div>${data.total > 50 ? pages : ''}${failures ? `<h3>未完成运行</h3>${failures}` : ''}`;
 }
 
 export async function openCoachHistory(trigger) {
@@ -57,16 +58,24 @@ export async function viewCoachHistory(trigger) {
   const serial = ++requestSerial;
   dialogs.modal('教练运行详情', '<p data-coach-history-loading>正在加载运行详情…</p>');
   try {
-    const run = await apiRequest(`/api/prompt-coach/history/${encodeURIComponent(trigger.dataset.runId)}`);
+    const path = trigger.dataset.requestId ? `audit/${encodeURIComponent(trigger.dataset.requestId)}` : `history/${encodeURIComponent(trigger.dataset.runId)}`;
+    const run = await apiRequest(`/api/prompt-coach/${path}`);
     if (serial !== requestSerial || !document.querySelector('[data-coach-history-loading]')) return;
     detail = run;
     const project = { ...store.getProject(), promptCoachResult: detail.result };
     const versionLabel = detail.coachPromptVersion ? `v${detail.coachPromptVersion.version} · ${detail.coachPromptVersion.title}` : '系统默认';
     const prompt = detail.coachPrompt ? `<details><summary>本次教练 Prompt · ${escapeHtml(versionLabel)}</summary><pre class="coach-history-prompt">${escapeHtml(detail.coachPrompt)}</pre></details>` : '';
-    dialogs.modal('教练运行详情', `<p>${escapeHtml(formatTime(detail.createdAt))}</p>${prompt}${renderMentorPanel(project, { history: true })}`,
+    const audit = renderCoachAudit(detail.audit);
+    dialogs.modal('教练运行详情', `${detail.createdAt ? `<p>${escapeHtml(formatTime(detail.createdAt))}</p>` : ''}${prompt}${detail.result ? renderMentorPanel(project, { history: true }) : '<p>本次运行未生成有效结果，详情见下方审计记录。</p>'}${audit}`,
       `<button class="button button-ghost" data-action="open-coach-history" data-scope="${scope}" data-offset="${offset}">返回记录</button>
       <button class="button button-secondary" data-action="download-coach-history">导出运行 JSON</button>`);
   } catch (error) { showToast(`历史记录读取失败：${error.message}`); }
+}
+
+function renderCoachAudit(events) {
+  if (!events?.length) return '<p class="muted">旧运行未记录实际请求、原始响应与过滤轨迹，无法补录。</p>';
+  const labels = { request: '实际发送内容', response: '模型原始响应', validation: '规则过滤记录', error: '运行错误' };
+  return `<h3>运行审计</h3>${events.map((event) => `<details><summary>${escapeHtml(labels[event.type] || event.type)} · ${escapeHtml(formatTime(event.createdAt))}</summary><pre class="coach-history-prompt">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre></details>`).join('')}`;
 }
 
 export function downloadCoachHistory() {

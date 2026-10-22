@@ -18,5 +18,6 @@
 | `../../migrations/0013_multi_project_prompt_coach.sql` | 多项目 Prompt Coach 范围、用户可编辑教练 Prompt 偏好及每次运行的实际 Prompt/项目快照 |
 | `../../migrations/0014_personal_key_connection.sql` | 为个人 Key 补齐接口域名与模型名称元数据 |
 | `../../migrations/0015_coach_prompt_versions.sql` | 教练 Prompt 不可变版本、当前版本指针、旧自定义偏好/运行快照回填及运行版本绑定 |
+| `../../migrations/0016_coach_audit_events.sql` | 追加式保存教练逐次实际请求、原始 HTTP 响应、规则过滤轨迹与失败原因，保留原历史不回填虚构数据 |
 
 约束：生产服务启动不自动迁移；必须先由无用户 Token 的 `db:deploy` 运维命令完成备份、migration 与完整性检查。
