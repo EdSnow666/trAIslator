@@ -2,7 +2,7 @@
  * 职责: 暴露个人与全班 AI Prompt 教练 API
  * 依赖内部: ../auth/authorization.ts, ../context.ts, ./prompt-coach.ts, ./prompt-coach-history.ts
  * 依赖外部: fastify
- * 暴露: 单工作空间、多项目、全班 Prompt Coach 运行、设置、取消与历史浏览路由
+ * 暴露: 单工作空间、多项目、全班 Prompt Coach 运行、教练 Prompt 保存/生成、取消与历史浏览路由
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -10,7 +10,7 @@ import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
 import { coachHistoryDetail, listCoachHistory } from './prompt-coach-history.js';
 import { cancelClassPromptCoach, cancelProjectPromptCoach, cancelWorkspacePromptCoach,
-  getPromptCoachSettings, runClassPromptCoach, runProjectPromptCoach,
+  getPromptCoachSettings, updatePromptCoachSettings, generatePromptCoachInstruction, runClassPromptCoach, runProjectPromptCoach,
   runWorkspacePromptCoach, type ProjectPromptCoachInput, type PromptCoachInput } from './prompt-coach.js';
 
 interface WorkspaceParams { workspaceId: string }
@@ -27,6 +27,12 @@ export function registerPromptCoachRoutes(app: FastifyInstance, context: AppCont
   app.get('/api/prompt-coach/settings', { preHandler: requireReadyAccount }, async (request) => (
     getPromptCoachSettings(context, request.authUser!.id)
   ));
+  app.put<{ Body: { coachPrompt: string } }>('/api/prompt-coach/settings',
+    { preHandler: requireReadyAccount }, async (request) => updatePromptCoachSettings(
+      context, request.authUser!, request.body.coachPrompt));
+  app.post<{ Body: ProjectPromptCoachInput }>('/api/prompt-coach/instruction/generate',
+    { preHandler: requireReadyAccount }, async (request) => generatePromptCoachInstruction(
+      context, request.authUser!, request.body));
   app.post<{ Body: ProjectPromptCoachInput }>('/api/prompt-coach/projects',
     { preHandler: requireReadyAccount }, async (request, reply) => reply.code(201).send(
       await runProjectPromptCoach(context, request.authUser!, request.body),

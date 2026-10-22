@@ -1,8 +1,8 @@
 /**
  * 职责: 从已确认个人 Diff 或全班已提交 Diff 运行并持久化 AI Prompt 教练
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./ai-queue.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-execution.ts, ./ai-queue.ts, ./coach-prompt-generator.ts
  * 依赖外部: 无
- * 暴露: 个人/多项目/全班 Prompt Coach 运行、取消、设置与后台消息快照
+ * 暴露: 个人/多项目/全班 Prompt Coach 运行、取消、设置保存、教练指令生成与后台消息快照
  */
 
 import type { AuthUser } from '../auth/types.js';
@@ -13,6 +13,7 @@ import { ensureClassManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
 import { runConfiguredModel } from './ai-execution.js';
 import { cancelAiQueueRequest } from './ai-queue.js';
+import { generateCoachInstruction, coachInstructionMessages } from './coach-prompt-generator.js';
 
 export interface PromptCoachInput { requestId: string; modelConfigId?: string; coachPrompt?: string }
 export interface ProjectPromptCoachInput extends PromptCoachInput { projectIds: string[] }
@@ -73,6 +74,34 @@ function saveCoachPrompt(context: AppContext, userId: string, prompt: string): v
     VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
       custom_prompt = excluded.custom_prompt, updated_at = excluded.updated_at`)
     .run(userId, prompt, nowIso());
+}
+
+export function updatePromptCoachSettings(context: AppContext, user: AuthUser,
+  value: unknown): unknown {
+  if (typeof value !== 'string') throw new AppError(400, 'COACH_PROMPT_REQUIRED', '请输入教练 Prompt。');
+  saveCoachPrompt(context, user.id, validatedCoachPrompt(value));
+  recordActivity(context, { eventType: 'prompt_coach.settings_saved', actorUserId: user.id });
+  return getPromptCoachSettings(context, user.id);
+}
+
+export async function generatePromptCoachInstruction(context: AppContext, user: AuthUser,
+  input: ProjectPromptCoachInput): Promise<unknown> {
+  if (!input.requestId?.trim()) throw new AppError(400, 'PROMPT_COACH_REQUEST_REQUIRED', '缺少 requestId。');
+  const ids = selectedProjectIds(input.projectIds);
+  const records = projectRecords(context, user.id, ids);
+  if (!records.length) throw new AppError(409, 'PROMPT_COACH_NO_DIFF', '没有可供学习的已确认人工修改 Diff。');
+  const base = typeof input.coachPrompt === 'string' ? validatedCoachPrompt(input.coachPrompt)
+    : storedCoachPrompt(context, user.id) || DEFAULT_COACH_PROMPT;
+  const controller = new AbortController();
+  activeCoachRuns.set(input.requestId, { scopeType: 'projects', scopeId: user.id, controller });
+  try { return await generateCoachInstruction(context, user, input, ids, records, base, controller.signal); }
+  finally { activeCoachRuns.delete(input.requestId); }
+}
+
+export function workspaceCoachInstructionMessages(context: AppContext, workspaceId?: string,
+  userId?: string): unknown[] {
+  return coachInstructionMessages(workspaceId ? workspaceRecords(context, workspaceId) : [],
+    (userId && storedCoachPrompt(context, userId)) || DEFAULT_COACH_PROMPT);
 }
 
 function effectiveCoachPrompt(context: AppContext, user: AuthUser,

@@ -24,7 +24,7 @@ function renderStatus(status) {
   root.hidden = !currentStatus || !['waiting', 'running'].includes(currentStatus.state);
   root.querySelector('[data-ai-queue-label]').textContent = currentStatus ? statusLabel(currentStatus) : '';
   root.querySelector('[data-action="prioritize-ai-request"]').hidden = !currentStatus?.canPrioritize;
-  const progress = document.querySelector('[data-translation-progress], [data-prompt-coach-progress]');
+  const progress = document.querySelector('[data-translation-progress], [data-prompt-coach-progress], [data-coach-instruction-status]');
   if (progress && currentStatus?.state === 'waiting') progress.textContent = statusLabel(currentStatus);
 }
 

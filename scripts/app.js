@@ -28,6 +28,7 @@ import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
 import { openCoachHistory, viewCoachHistory, downloadCoachHistory } from './ui/prompt-coach-history.js';
+import { openCoachPromptEditor, saveCoachPrompt, generateCoachInstruction, cancelCoachInstruction } from './ui/coach-prompt-editor.js';
 import { initAiQueueStatus, prioritizeAiQueue } from './ui/ai-queue-status.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
 import { cancelPromptCoach, confirmRunPromptCoach, resetPromptCoachPrompt,
@@ -72,6 +73,11 @@ const actionHandlers = {
   'add-term': dialogs.openTermModal,
   'save-term': saveTerm,
   'apply-coach-rules': applyCoachRules,
+  'confirm-coach-rule-target': confirmCoachRuleTarget,
+  'open-coach-prompt-editor': openCoachPromptEditor,
+  'save-coach-prompt': saveCoachPrompt,
+  'generate-coach-instruction': generateCoachInstruction,
+  'cancel-coach-instruction': cancelCoachInstruction,
   'download-coach-json': downloadPromptCoachJson,
   'run-prompt-coach': runPromptCoach,
   'open-coach-history': openCoachHistory,
@@ -383,6 +389,7 @@ function openPromptFromActive() {
   dialogs.openPromptModal(prompt?.content || '');
 }
 
+let pendingCoachRules = null;
 function applyCoachRules() {
   if (promptEditingBlocked()) return showToast('系统模板为只读；请先克隆为教学项目。');
   const analysis = store.getProject().promptCoachResult || analyzePromptCoach(store.getProject());
@@ -390,11 +397,24 @@ function applyCoachRules() {
     .map((item) => item.dataset.coachRule));
   const rules = analysis.rules.filter((rule) => selected.has(rule.id));
   if (!rules.length) return showToast('请至少选择一条结构规则。');
-  const active = store.getPrompt(store.getProject().activePromptId);
-  const content = `${active.content.trim()}\n\n${buildPromptRuleAppendix(rules)}`;
+  pendingCoachRules = { projectId: store.getProject().id, rules, analysis };
+  dialogs.modal('选择 Prompt 草稿', '<p>将已选规则加入哪个草稿？</p>',
+    '<button class="button button-secondary" data-action="confirm-coach-rule-target" data-prompt-kind="translation">翻译 Prompt 草稿</button>'
+    + (store.getProject().aiPostEditAllowed === false ? '' : '<button class="button button-primary" data-action="confirm-coach-rule-target" data-prompt-kind="post_edit">译后编辑 Prompt 草稿</button>'));
+}
+function confirmCoachRuleTarget(trigger) {
+  if (!pendingCoachRules || pendingCoachRules.projectId !== store.getProject().id) return;
+  const { rules, analysis } = pendingCoachRules;
+  const kind = trigger.dataset.promptKind;
+  if (!['translation', 'post_edit'].includes(kind)) return;
+  if (kind === 'post_edit' && store.getProject().aiPostEditAllowed === false) return;
+  const active = store.getPrompt(kind === 'post_edit'
+    ? store.getProject().activePostEditPromptId : store.getProject().activePromptId);
+  const content = `${active?.content?.trim() || ''}\n\n${buildPromptRuleAppendix(rules)}`.trim();
   const traceCount = analysis.summary?.traceCount ?? analysis.totalCount ?? 0;
   const note = `AI Prompt 教练：基于 ${traceCount} 条句子结构 Diff 分析`;
-  dialogs.openPromptModal(content, { title: 'T2 句法结构优化', note });
+  dialogs.openPromptModal(content, { title: '句法结构优化', note, promptKind: kind });
+  pendingCoachRules = null;
 }
 
 function promptFormInput() {

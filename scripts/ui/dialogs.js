@@ -252,7 +252,7 @@ function openPromptLineageModal(options = {}) {
     <button class="${promptLineageKind === 'post_edit' ? 'is-active' : ''}"
       data-action="switch-prompt-lineage" data-prompt-kind="post_edit">译后编辑 Prompt</button></div>` : '';
   const body = `<div class="prompt-lineage-switch">${kindSwitch}
-    <div class="prompt-lineage-tools"><button class="button button-primary prompt-lineage-tool" data-action="open-new-prompt-version"
+    <div class="prompt-lineage-tools">${project.serverMode ? '<button class="button button-ghost prompt-lineage-tool" data-action="open-coach-prompt-editor">教练 Prompt</button>' : ''}<button class="button button-primary prompt-lineage-tool" data-action="open-new-prompt-version"
       data-prompt-kind="${promptLineageKind}">新建</button>
     <button class="button button-ghost prompt-lineage-tool ${showArchivedPrompts ? 'is-active' : ''}"
       data-action="toggle-archived-prompts" aria-pressed="${showArchivedPrompts}">已归档</button></div></div>
@@ -480,26 +480,30 @@ function promptCoachProjectOption(project, currentId) {
     <small>${escapeHtml(project.direction)} · 汇总当前账号已确认的人工修改</small></span></label>`;
 }
 
-function openPromptCoachSetup(projects, settings, currentId) {
+function openPromptCoachSetup(projects, settings, currentId, options = {}) {
   promptCoachDefault = settings.defaultPrompt;
-  const options = projects.map((project) => promptCoachProjectOption(project, currentId)).join('');
+  const projectOptions = projects.map((project) => promptCoachProjectOption(project, currentId)).join('');
   const source = settings.customPrompt ? '当前使用自定义 Prompt' : '当前使用系统默认 Prompt';
   const body = `<p class="muted">选择 1 至 20 个项目。系统只读取当前账号在这些项目中已确认的 AI 原译 → 人工修改 Diff。</p>
-    <div class="form-group"><label>项目范围</label><div class="prompt-coach-projects">${options}</div></div>
+    <div class="form-group"><label>项目范围</label><div class="prompt-coach-projects">${projectOptions}</div></div>
     <div class="form-group"><label for="prompt-coach-instruction">AI 教练 Prompt</label>
       <textarea id="prompt-coach-instruction" class="field field-full prompt-long-editor">${escapeHtml(settings.effectivePrompt)}</textarea>
-      <p class="muted" data-coach-prompt-source>${source}；未修改时继续使用默认值。</p></div>`;
+      <p class="muted" data-coach-prompt-source>${source}；保存后供当前账号后续运行使用。</p></div>
+    <button class="button button-secondary" data-action="generate-coach-instruction">根据所选项目修改记录生成 Prompt</button>
+    <div role="status" data-coach-instruction-status></div>
+    <button class="text-button" data-action="cancel-coach-instruction" hidden>取消生成</button>`;
   const footer = '<button class="button button-ghost" data-action="reset-prompt-coach-prompt">恢复默认</button>'
     + '<button class="button button-ghost" data-action="close-modal">取消</button>'
-    + '<button class="button button-primary" data-action="confirm-run-prompt-coach">运行教练</button>';
-  modal('AI Prompt 教练 · 项目与 Prompt', body, footer);
+    + '<button class="button button-secondary" data-action="save-coach-prompt">保存 Prompt</button>'
+    + (options.editorOnly ? '' : '<button class="button button-primary" data-action="confirm-run-prompt-coach">运行教练</button>');
+  modal(options.editorOnly ? '编辑 AI 教练 Prompt' : 'AI Prompt 教练 · 项目与 Prompt', body, footer);
 }
 
 function resetPromptCoachPrompt() {
   const field = modalRoot.querySelector('#prompt-coach-instruction');
   if (field) field.value = promptCoachDefault;
   const source = modalRoot.querySelector('[data-coach-prompt-source]');
-  if (source) source.textContent = '已恢复系统默认 Prompt；运行后不会保留自定义版本。';
+  if (source) source.textContent = '已填入默认 Prompt；点击保存后生效。';
 }
 
 function openPromptCoachProgress(projectCount = 1) {

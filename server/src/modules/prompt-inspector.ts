@@ -7,7 +7,7 @@
 
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
-import { workspacePromptCoachMessages } from './prompt-coach.js';
+import { workspacePromptCoachMessages, workspaceCoachInstructionMessages } from './prompt-coach.js';
 import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, projectMessages,
   fullTranslationMessages, promptGenerationPayload, translationMessages } from './prompt-structures.js';
 
@@ -128,6 +128,8 @@ export function inspectPromptStructures(context: AppContext, input: InspectInput
         fullTranslationPayload(context, project, input, samples, translationPublished, translationActive)) },
       ...postEdit.operations,
       { id: 'prompt_coach', label: 'AI Prompt 教练', messages: coachMessages },
+      { id: 'coach_instruction_generate', label: '根据修改记录生成教练 Prompt',
+        messages: workspaceCoachInstructionMessages(context, input.workspaceId, userId) },
       { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
       { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,
         promptGenerationPayload(brief(context, project.id), sampleText)) },

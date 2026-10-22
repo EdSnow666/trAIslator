@@ -9,6 +9,7 @@ const generationPaths = [
   /\/ai\/execute(?:-full)?$/,
   /\/(?:brief|prompt)\/generate$/,
   /\/prompt-coach(?:\/projects)?$/,
+  /\/prompt-coach\/instruction\/generate$/,
 ];
 
 function requestIdFromOptions(options) {

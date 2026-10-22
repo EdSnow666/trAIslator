@@ -613,6 +613,7 @@ export function renderMentorPanel(project, options = {}) {
     <p class="coach-scope">${summary}<br>仅分析句界、谓语、施事、逻辑层级、回指和引语边界；术语差异不计入规则。</p>
     <div class="coach-rule-list">${cards || '<div class="empty-state">暂未发现可稳定归纳的句子结构规则。</div>'}</div>
     ${options.history ? '' : `<div class="coach-actions">
+      ${project.serverMode ? '<button class="button button-soft button-full" data-action="open-coach-prompt-editor">编辑教练 Prompt</button>' : ''}
       ${project.serverMode ? '<button class="button button-soft button-full" data-action="open-coach-history">历史运行记录</button>' : ''}
       ${cards ? '<button class="button button-primary button-full" data-action="apply-coach-rules">将已选规则加入 Prompt 草稿</button>' : ''}
       ${project.serverMode && project.editable ? '<button class="button button-secondary button-full" data-action="run-prompt-coach">运行 AI Prompt 教练</button>' : ''}

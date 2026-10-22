@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { exerciseCoachHistory } from './prompt-coach-history-test-helpers.js';
+import { exerciseCoachInstruction } from './coach-instruction-test-helpers.js';
 
 interface SessionSet { student: { cookie: string }; teacher: { cookie: string } }
 interface Scenario {
@@ -26,6 +27,12 @@ function mockCoachContent(messages: Array<{ content?: string }>): string {
 
 function mockModelContent(messages: Array<{ content?: string }> = []): string {
   const instruction = messages[0]?.content || '';
+  if (instruction.includes('编写供“AI Prompt教练”使用的分析指令')) {
+    const payload = JSON.parse(messages[1]!.content!) as { currentPrompt: string; records: unknown[] };
+    assert.ok(payload.records.length > 0);
+    assert.match(payload.currentPrompt, /引语边界/);
+    return '根据人工修改中的引语边界、施事与信息顺序提取规则，单段落标为单例候选并引用实际案例。';
+  }
   if (instruction.includes('AI prompt coach')) return mockCoachContent(messages);
   if (instruction.includes('preserving paragraph alignment')) {
     const payload = JSON.parse(messages[1]?.content || '{}') as
@@ -237,6 +244,7 @@ export async function exercisePromptCoach(app: FastifyInstance, sessions: Sessio
   assert.equal(wholeClass.statusCode, 201, wholeClass.body);
   assert.ok(wholeClass.json().summary.studentCount >= 1);
   await exerciseCoachHistory(app, sessions, scenario);
+  await exerciseCoachInstruction(app, sessions, scenario.projectId);
   const submissions = await app.inject({ method: 'GET', url: '/api/teaching/submissions',
     headers: { cookie: sessions.teacher.cookie } });
   assert.ok(submissions.json().translations.some(

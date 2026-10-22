@@ -6,7 +6,7 @@
 | `teaching*.ts` | 班级清单、成员与已分配项目详情、按班级项目/花名册下钻的学生提交 Prompt/译文审阅与导出入口，以及实验、阶段、状态、受试者纳入和撤回 |
 | `projects*.ts`、`project-generation-routes.ts`、`project-resources.ts`、`project-snapshot.ts`、`template-clone.ts` | 本地项目创建、发布/取消发布与软删除、模板任务书目录、任务书/Prompt 初始化与失败降级、受管班级/实验分配、工作空间、CAT 快照与模板克隆 |
 | `prompts*.ts` | 系统模板 Prompt 实体化继承、项目内递增版本、学生私有 Prompt、主动提交、教师发布/取消及已发布历史保留与版本安全归档 |
-| `prompt-coach*.ts` | 单项目/多项目个人已确认 Diff 与全班已提交 Diff 的 AI 规则归纳、用户可编辑教练 Prompt、案例数排序、后台发送结构复用、不可变运行快照、按账号分页浏览历史与项目最近结果恢复 |
+| `prompt-coach*.ts`、`coach-prompt-generator.ts` | 单项目/多项目个人已确认 Diff 与全班已提交 Diff 的 AI 规则归纳、教练 Prompt 独立编辑保存与根据 Diff 生成草稿（统一队列、取消、AI 运行审计）、案例数排序、后台发送结构复用、不可变运行快照、按账号分页浏览历史与项目最近结果恢复 |
 | `translations*.ts`、`translation-diffs.ts` | 不可变译文版本、稳定机器比较基线、持久化 Diff、原子保存/确认/提交、精确工作流事件、AI 决策历史与幂等重试；学生提交不混入教师 CAT 主界面 |
 | `activity*.ts` | 有意义事件的追加式记录、管理员全局审计与教师受管范围审计 |
 | `document-import.ts` | TXT、DOCX、PDF 文本提取、上传限制和导入事件记录 |
