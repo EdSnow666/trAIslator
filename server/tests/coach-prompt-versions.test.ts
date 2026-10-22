@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
-import { normalizedRules } from '../src/modules/prompt-coach.js';
+import { createHash } from 'node:crypto';
+import { normalizedRules, getPromptCoachSettings } from '../src/modules/prompt-coach.js';
+import { COACH_BASELINE_ID, DEFAULT_COACH_PROMPT, COACH_HARNESS } from '../src/modules/coach-baseline.js';
 import { appendCoachAudit, coachAuditEvents } from '../src/modules/coach-audit.js';
 import { appendAiRunAudit, readAiRunAudit } from '../src/modules/ai-run-audit.js';
 import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
@@ -34,6 +36,44 @@ function legacyDatabase() {
   db.transaction(() => db.exec(migration))();
   return { db, instanceId: 'test' };
 }
+
+test('带示例基线与实测提取 Prompt、系统输出契约逐字一致，升级不覆盖私有版本', () => {
+  assert.equal(COACH_BASELINE_ID, 'example-backed-style-2026-10-22.v1');
+  assert.equal(createHash('sha256').update(DEFAULT_COACH_PROMPT).digest('hex'),
+    'c5e50f118128539b1509a9be890cf83ee60acf9ba56b89f58fc4c3bb5b932965');
+  assert.equal(createHash('sha256').update(COACH_HARNESS).digest('hex'),
+    '3c1752a7a2a76bb00569659183c532e767213a4977c095ba490582ea10ac1768');
+  const context = legacyDatabase();
+  try {
+    const before = coachPromptVersions(context, 'u1');
+    const custom = getPromptCoachSettings(context, 'u1') as any;
+    assert.equal(custom.effectivePrompt, '当前尚未运行的指令');
+    assert.equal(custom.defaultPrompt, DEFAULT_COACH_PROMPT);
+    assert.equal(custom.baselineId, COACH_BASELINE_ID);
+    const defaults = getPromptCoachSettings(context, 'u2') as any;
+    assert.equal(defaults.effectivePrompt, DEFAULT_COACH_PROMPT);
+    assert.equal(defaults.activeVersionId, 'default');
+    assert.deepEqual(coachPromptVersions(context, 'u1'), before);
+  } finally { context.db.close(); }
+});
+
+test('带示例输出结构保持兼容，示例原文不裁剪，按独立支持记录数排序', () => {
+  const records = ['r1', 'r2'].map((recordId) => ({ recordId, projectId: 'p', projectName: '项目',
+    workspaceId: 'w', segmentId: recordId, sourceText: 'She said, “Hello.”',
+    aiText: '“你好，”她说道。', postEditText: '她说：“你好。”', diff: [{ type: 'same', value: '你好' }] }));
+  const instruction = '引语较长时先交代说话者。\nAI 原译：“你好，”她说道。\n人工改写：她说：“你好。”\n先明确归属，再展开引语。';
+  const rules = normalizedRules(JSON.stringify({ rules: [
+    { id: 'one', category: '口吻', title: '单例', instruction, signal: '单例候选', evidenceRecordIds: ['r1'] },
+    { id: 'two', category: '口吻', title: '重复', instruction, signal: '重复案例', evidenceRecordIds: ['r1', 'r2', 'r2'] },
+  ] }), records);
+  assert.deepEqual(rules.map((rule) => rule.id), ['two', 'one']);
+  assert.deepEqual(rules.map((rule) => rule.supportCount), [2, 1]);
+  assert.deepEqual(rules.map((rule) => rule.supportTier), ['repeated', 'candidate']);
+  assert.equal(rules[0]!.instruction, instruction);
+  assert.deepEqual(Object.keys(rules[0]!).sort(),
+    ['id', 'category', 'title', 'instruction', 'supportCount', 'supportTier', 'evidence'].sort());
+  assert.equal(rules[1]!.evidence[0]!.signal, '单例候选');
+});
 
 test('迁移同时恢复历史指令与当前草稿，保留原运行内容和绑定', () => {
   const context = legacyDatabase();

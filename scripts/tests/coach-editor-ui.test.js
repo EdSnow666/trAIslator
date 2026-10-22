@@ -9,7 +9,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { analyzePromptCoach } from '../services/prompt-coach.js';
+import { analyzePromptCoach, buildPromptRuleAppendix } from '../services/prompt-coach.js';
+
+test('规则加入草稿时完整携带真实改写示例', () => {
+  const instruction = '先交代说话者。\nAI 原译：“你好，”她说道。\n人工改写：她说：“你好。”\n示例展示引语归属前置。';
+  assert.ok(buildPromptRuleAppendix([{ instruction }]).includes(instruction));
+});
 
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 const modalRoot = { innerHTML: '' };

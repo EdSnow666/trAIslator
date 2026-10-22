@@ -256,6 +256,7 @@ export async function exercisePromptCoach(app: FastifyInstance, sessions: Sessio
     assert.ok(evidence.diff.length > 0);
   }
   assert.equal(personal.json().schema, 'translation-aiducator.prompt-coach.v3');
+  assert.equal(personal.json().coachSpecVersion, 'example-backed-style-2026-10-22.v1');
   const inactiveCancel = await app.inject({ method: 'POST', url: `${personalUrl}/cancel`,
     headers: { cookie: sessions.student.cookie }, payload: { requestId: 'coach-personal-001' } });
   assert.equal(inactiveCancel.statusCode, 200, inactiveCancel.body);
