@@ -7,6 +7,7 @@
 
 import { store } from './state/store.js'; import './services/translation-drafts-input.js';
 import { initializeAuth } from './services/auth-client.js';
+import { clearTranslationDraft } from './services/translation-drafts.js';
 import {
   createServerProject, createServerPrompt, loadProjectResourceCatalog, loadServerProjects, publishServerPrompt, refreshServerProject, unpublishServerPrompt,
   runServerAiTranslation, saveServerPostEdit, selectServerPrompt, selectServerVersion,
@@ -306,7 +307,9 @@ async function saveSegment(trigger) {
   }
   trigger.disabled = true;
   try {
-    await saveServerPostEdit(store.getProject(), segment, translation, editor.value);
+    const project = store.getProject();
+    await saveServerPostEdit(project, segment, translation, editor.value);
+    clearTranslationDraft(project.id, segment.id, translation.id);
     await refreshCurrentServerProject();
     showToast('已保存');
   } catch (error) {
@@ -518,6 +521,7 @@ async function setCurrentVersion(trigger) {
   try {
     if (store.getState().serverMode && translation.serverVersionKind) {
       await selectServerVersion(store.getProject(), segment.id, translation.id);
+      await refreshCurrentServerProject();
     }
     store.setCurrentTranslation(segment.id, translation.id);
     dialogs.closeDrawer();

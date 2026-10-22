@@ -6,7 +6,7 @@
  */
 
 import { store } from '../state/store.js';
-import { getTranslationDraft } from '../services/translation-drafts.js';
+import { getPendingTranslationDraft } from '../services/translation-drafts.js';
 import { buildDiff } from '../services/diff-engine.js';
 import { resolveAiPostEdit } from '../services/ai-post-edit.js';
 import { analyzePromptCoach } from '../services/prompt-coach.js';
@@ -219,7 +219,7 @@ function segmentDisplayStatus(project, segment, selectedTranslation = null) {
     || segment.translations.find((item) => item.id === segment.currentTranslationId);
   if (!current) return segment.status;
   const saved = current.postEditText || current.aiText || '';
-  const cached = getTranslationDraft(project.id, segment.id, current.id);
+  const cached = getPendingTranslationDraft(project, segment, current);
   const aiDraft = store.getAiPostEditDraft(segment.id);
   const aiDirty = aiDraft?.translationId === current.id
     && (aiDraft.active || aiDraft.text !== aiDraft.initialText);
@@ -228,7 +228,7 @@ function segmentDisplayStatus(project, segment, selectedTranslation = null) {
 
 function currentTarget(state, project, segment, index, current, prompt) {
   const target = current?.postEditText || current?.aiText || '';
-  const cached = current ? getTranslationDraft(project.id, segment.id, current.id) : null;
+  const cached = current ? getPendingTranslationDraft(project, segment, current) : null;
   const aiVisible = project.aiPostEditAllowed !== false && hasVisibleAiPostEdit(state, current);
   const draft = aiVisible ? store.getAiPostEditDraft(segment.id) : null;
   const aiEditing = Boolean(draft?.active);
@@ -306,7 +306,7 @@ function versionTarget(state, project, segment, index, translation) {
   const isCurrent = isSelectedBase && !hasAiVersion;
   const prompt = store.getPrompt(translation.promptId);
   const savedTarget = hasAiVersion ? translation.aiText : (translation.postEditText || translation.aiText || '');
-  const cached = isCurrent ? getTranslationDraft(project.id, segment.id, translation.id) : null;
+  const cached = isCurrent ? getPendingTranslationDraft(project, segment, translation) : null;
   const target = cached ?? savedTarget;
   const editor = versionEditor(segment, index, target, isCurrent);
   const showDiff = !hasAiVersion && (state.diffMode || Boolean(translation.aiPostEditTrace));

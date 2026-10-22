@@ -249,7 +249,8 @@ function setAiPostEditVisible(enabled) {
 }
 
 function getAiPostEditDraft(segmentId) {
-  return aiPostEditDrafts.get(segmentId) || null;
+  const draft = aiPostEditDrafts.get(segmentId);
+  return draft?.translationId === getCurrentTranslation(getSegment(segmentId))?.id ? draft : null;
 }
 
 function beginAiPostEditDraft(segmentId) {
