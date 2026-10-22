@@ -95,7 +95,7 @@ function versionCard(project, segment, item) {
     <p class="muted" style="font-size:9px">${escapeHtml(item.author)} · ${escapeHtml(item.model)}</p>
     <div class="version-text">${escapeHtml(displayText)}</div>
     ${revision}${renderVersionLinks(segment, item)}${drawerBaseVersionAction(segment, item, isCurrent, hasAiVersion)}
-    ${versionPromptSnapshot(item)}
+    ${versionPromptSnapshot(item)}${versionRunAuditButton(item)}
   </article>`;
 }
 
@@ -118,13 +118,17 @@ function aiPostEditVersionCard(project, segment, item) {
     <div class="version-meta"><strong>AI 译后编辑版本 · T${index}-AI</strong><span class="badge badge-direction">${isCurrent ? '当前显示' : 'AI 译后编辑'}</span></div>
     <p class="muted" style="font-size:9px">Prompt ${escapeHtml(edit.promptLabel)} · ${escapeHtml(edit.promptTitle)} · ${escapeHtml(edit.model)} · ${escapeHtml(edit.createdAt)}</p>
     <div class="version-text">${escapeHtml(humanText)}</div>
-    ${aiDiff}${humanDiff}${renderVersionLinks(segment, item)}${action}
+    ${aiDiff}${humanDiff}${renderVersionLinks(segment, item)}${action}${versionRunAuditButton(item)}
     <details style="margin-top:12px"><summary class="text-button" style="cursor:pointer">查看绑定的完整 Prompt 快照</summary><div class="prompt-snapshot">${escapeHtml(edit.promptSnapshot)}</div></details>
   </article>`;
 }
 
 function drawerAiVersionAction(segment, item) {
   return `<button class="text-button" data-action="set-current-version" data-segment-id="${segment.id}" data-translation-id="${item.id}" style="float:right">设为当前显示</button>`;
+}
+
+function versionRunAuditButton(item) {
+  return item.serverAiRunId ? `<button class="text-button" data-action="open-ai-run-audit" data-run-id="${escapeHtml(item.serverAiRunId)}">查看实际请求与原始响应</button>` : '';
 }
 function resolvedDrawerAiEdit(project, edit) {
   if (edit.status === 'applied' && typeof edit.resultText === 'string') return edit.resultText;

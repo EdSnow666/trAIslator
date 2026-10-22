@@ -29,6 +29,7 @@ import { openPersonalApiKeysModal } from './ui/personal-api-keys.js';
 import { openModelManagementModal } from './ui/model-management.js';
 import { openPromptInspectorModal } from './ui/prompt-inspector.js';
 import { openCoachHistory, viewCoachHistory, downloadCoachHistory } from './ui/prompt-coach-history.js';
+import { openAiRunAudit, downloadAiRunAudit } from './ui/ai-run-audit.js';
 import { openCoachPromptEditor, saveCoachPrompt, activateCoachPromptVersion, generateCoachInstruction, cancelCoachInstruction } from './ui/coach-prompt-editor.js';
 import { initAiQueueStatus, prioritizeAiQueue } from './ui/ai-queue-status.js';
 import { archivePrompt, openPromptVersionEditor, requestPromptArchive, restorePrompt } from './ui/prompt-management.js';
@@ -45,6 +46,8 @@ import { buildPostEditCorpusArtifact } from './services/post-edit-export.js';
 import { buildProjectExportArtifact } from './services/project-export.js';
 
 const actionHandlers = {
+  'open-ai-run-audit': openAiRunAudit,
+  'download-ai-run-audit': downloadAiRunAudit,
   'select-segment': selectSegment,
   'activate-prompt': activatePrompt,
   'edit-prompt-version': openPromptVersionEditor,

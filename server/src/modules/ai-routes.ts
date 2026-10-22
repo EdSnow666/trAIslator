@@ -1,6 +1,6 @@
 /**
  * 职责: 暴露服务器模型配置、AI 能力状态与真实翻译执行 API
- * 依赖内部: ../auth/authorization.ts, ../context.ts, ./ai-execution.ts, ./prompt-inspector.ts, ./server-models.ts
+ * 依赖内部: ../auth/authorization.ts, ../context.ts, ./ai-execution.ts, ./ai-run-audit.ts, ./prompt-inspector.ts, ./server-models.ts
  * 依赖外部: fastify
  * 暴露: registerAiRoutes
  */
@@ -8,6 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireReadyAccount, requireRoles } from '../auth/authorization.js';
 import type { AppContext } from '../context.js';
+import { readAiRunAudit, listAiRunAudits } from './ai-run-audit.js';
 import { cancelAiTranslation, executeAiTranslation, executeFullTranslation, testServerModelConnection,
   type AiExecutionInput, type FullTranslationInput } from './ai-execution.js';
 import { aiPostEditAllowed, ensureProjectView, ensureWorkspaceView } from './access.js';
@@ -51,6 +52,14 @@ function registerModelManagementRoutes(app: FastifyInstance, context: AppContext
 }
 
 function registerAiExecutionRoutes(app: FastifyInstance, context: AppContext): void {
+  app.get<{ Querystring: { projectId?: string } }>('/api/ai/runs',
+    { preHandler: requireReadyAccount }, async (request) => (
+      listAiRunAudits(context, request.authUser!, request.query.projectId)
+    ));
+  app.get<{ Params: { runId: string } }>('/api/ai/runs/:runId/audit',
+    { preHandler: requireReadyAccount }, async (request) => (
+      readAiRunAudit(context, request.authUser!, request.params.runId)
+    ));
   app.get<{ Params: QueueParams }>('/api/ai/queue/:requestId',
     { preHandler: requireReadyAccount }, async (request) => (
       aiQueueStatus(request.authUser!, request.params.requestId)

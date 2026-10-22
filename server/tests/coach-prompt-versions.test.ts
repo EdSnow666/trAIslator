@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { normalizedRules } from '../src/modules/prompt-coach.js';
 import { appendCoachAudit, coachAuditEvents } from '../src/modules/coach-audit.js';
+import { appendAiRunAudit, readAiRunAudit } from '../src/modules/ai-run-audit.js';
 import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
   activateCoachPromptVersion } from '../src/modules/coach-prompt-versions.js';
 
@@ -103,5 +104,24 @@ test('教练审计追加不可变，按账号隔离且不改动旧历史', () =>
     assert.throws(() => context.db.exec("UPDATE prompt_coach_audit_events SET request_id='other'"), /append only/);
     assert.throws(() => context.db.exec('DELETE FROM prompt_coach_audit_events'), /append only/);
     assert.equal((context.db.prepare('SELECT COUNT(*) AS n FROM prompt_coach_runs').get() as { n: number }).n, 3);
+  } finally { context.db.close(); }
+});
+
+test('全文运行审计不可变、独立于原版本且按运行所有者隔离', () => {
+  const context = legacyDatabase();
+  try {
+    context.db.exec(`CREATE TABLE ai_runs(id TEXT PRIMARY KEY,actor_user_id TEXT,operation_type TEXT,
+      status TEXT,model TEXT,request_id TEXT,started_at TEXT);
+      INSERT INTO ai_runs VALUES('run','u1','ai_post_edit','succeeded','mock','request','2026-10-22');`);
+    context.db.exec(readFileSync('server/migrations/0017_ai_run_audit_events.sql', 'utf8'));
+    appendAiRunAudit(context, 'run', 'request', { body: { messages: [] } });
+    appendAiRunAudit(context, 'run', 'response', { status: 200, rawBody: '{"choices":[]}' });
+    const user = { id: 'u1', username: 'u1', displayName: '用户', roles: [] as [], mustChangePassword: false };
+    const audit = readAiRunAudit(context, user, 'run') as { events: unknown[] };
+    assert.equal(audit.events.length, 2);
+    assert.throws(() => readAiRunAudit(context, { ...user, id: 'u2' }, 'run'), /不存在/);
+    assert.throws(() => context.db.exec("UPDATE ai_run_audit_events SET event_type='error'"), /append only/);
+    assert.throws(() => context.db.exec('DELETE FROM ai_run_audit_events'), /append only/);
+    assert.deepEqual(context.db.pragma('foreign_key_check'), []);
   } finally { context.db.close(); }
 });

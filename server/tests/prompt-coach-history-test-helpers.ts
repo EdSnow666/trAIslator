@@ -89,6 +89,15 @@ async function assertCoachReload(app: FastifyInstance, headers: { cookie: string
 export async function verifyCoachHistoryAfterRestart(databasePath: string, sessions: Sessions,
   scenario: Scenario): Promise<void> {
   const app = await buildServer(databasePath, false);
-  try { await exerciseCoachHistory(app, sessions, scenario, false); }
+  try {
+    await exerciseCoachHistory(app, sessions, scenario, false);
+    const headers = { cookie: sessions.student.cookie };
+    const runs = await app.inject({ method: 'GET', url: '/api/ai/runs', headers });
+    const full = runs.json().runs.find((r: { requestId: string }) => r.requestId === 'full-post-edit-001');
+    assert.ok(full);
+    const audit = await app.inject({ method: 'GET', url: `/api/ai/runs/${full.id}/audit`, headers });
+    assert.equal(audit.statusCode, 200, audit.body);
+    assert.equal(audit.json().events.length, 3);
+  }
   finally { await app.close(); }
 }

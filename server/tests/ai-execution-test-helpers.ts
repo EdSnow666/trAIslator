@@ -165,6 +165,20 @@ export async function exerciseFullPostEdit(app: FastifyInstance, sessions: Sessi
   assert.equal(first.statusCode, 201, first.body);
   assert.deepEqual(retry.json().translationVersionIds, first.json().translationVersionIds);
   await assertFullPostEditSnapshot(app, sessions, scenario, baseIds);
+  const auditUrl = `/api/ai/runs/${first.json().runId}/audit`;
+  const audit = await app.inject({ method: 'GET', url: auditUrl, headers: { cookie: sessions.student.cookie } });
+  assert.equal(audit.statusCode, 200, audit.body);
+  assert.deepEqual(audit.json().events.map((e: { type: string }) => e.type), ['request', 'response', 'validation']);
+  const body = audit.json().events[0].payload.body;
+  const sent = JSON.parse(body.messages[1].content);
+  assert.match(body.messages[0].content, /Compare each currentTranslation against its source/);
+  assert.equal(sent.segments.length, baseIds.size);
+  assert.ok(sent.segments.every((s: { source: string; currentTranslation: string }) => s.source && s.currentTranslation));
+  assert.ok('projectBrief' in sent && 'customPrompt' in sent && 'overarchingPrompt' in sent);
+  assert.ok(JSON.parse(audit.json().events[1].payload.rawBody).choices[0].message.content);
+  assert.doesNotMatch(audit.body, /test-only-key|authorization|Bearer /i);
+  const denied = await app.inject({ method: 'GET', url: auditUrl, headers: { cookie: sessions.teacher.cookie } });
+  assert.equal(denied.statusCode, 404);
 }
 
 export async function exerciseClassPostEditPolicy(app: FastifyInstance, sessions: SessionSet,
@@ -300,11 +314,33 @@ export async function exerciseInvalidFullTranslation(app: FastifyInstance, sessi
       modelConfigId: model.json().id, requestId: 'full-translation-invalid-001' } });
   assert.equal(failed.statusCode, 502, failed.body);
   assert.equal(failed.json().code, 'FULL_TRANSLATION_ALIGNMENT_INVALID');
+  const runs = await app.inject({ method: 'GET', url: `/api/ai/runs?projectId=${scenario.projectId}`,
+    headers: { cookie: sessions.student.cookie } });
+  const failedRun = runs.json().runs.find((r: { requestId: string }) => r.requestId === 'full-translation-invalid-001');
+  assert.equal(failedRun.status, 'failed');
+  const audit = await app.inject({ method: 'GET', url: `/api/ai/runs/${failedRun.id}/audit`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.deepEqual(audit.json().events.map((e: { type: string }) => e.type), ['request', 'response', 'validation', 'error']);
+  assert.equal(audit.json().events[2].payload.valid, false);
   const after = await app.inject({ method: 'GET',
     url: `/api/projects/${scenario.projectId}/snapshot?workspaceId=${scenario.workspaceId}`,
     headers: { cookie: sessions.student.cookie } });
   assert.deepEqual(after.json().project.segments.map(
     (item: { currentTranslationId: string }) => item.currentTranslationId), currentIds);
+  await app.inject({ method: 'POST', url: '/api/manage/server-models', headers: { cookie: sessions.teacher.cookie },
+    payload: { id: model.json().id, name: '全文HTTP重试审计', provider: 'openai_compatible', baseUrl,
+      model: 'no-channel-model', maxRetries: 1, isDefault: false } });
+  const httpFailed = await app.inject({ method: 'POST', url: `/api/workspaces/${scenario.workspaceId}/ai/execute-full`,
+    headers: { cookie: sessions.student.cookie }, payload: { kind: 'ai_post_edit',
+      modelConfigId: model.json().id, requestId: 'full-post-edit-http-failure' } });
+  assert.equal(httpFailed.statusCode, 502, httpFailed.body);
+  const httpRuns = await app.inject({ method: 'GET', url: '/api/ai/runs', headers: { cookie: sessions.student.cookie } });
+  const httpRun = httpRuns.json().runs.find((r: { requestId: string }) => r.requestId === 'full-post-edit-http-failure');
+  const httpAudit = await app.inject({ method: 'GET', url: `/api/ai/runs/${httpRun.id}/audit`,
+    headers: { cookie: sessions.student.cookie } });
+  assert.deepEqual(httpAudit.json().events.map((e: { type: string }) => e.type), ['request', 'response', 'request', 'response', 'error']);
+  assert.equal(httpAudit.json().events[1].payload.status, 503);
+  assert.equal(httpRun.status, 'failed');
   const disabled = await app.inject({ method: 'DELETE',
     url: `/api/manage/server-models/${model.json().id}`, headers: { cookie: sessions.teacher.cookie } });
   assert.equal(disabled.statusCode, 200, disabled.body);

@@ -23,6 +23,7 @@ interface SegmentRow {
 }
 interface VersionRow {
   id: string; segment_id: string; parent_version_id: string | null;
+  ai_run_id: string | null;
   base_translation_version_id: string | null; root_translation_version_id: string | null;
   comparison_version_id: string | null; prompt_version_id: string | null;
   version_kind: string; content: string; created_at: string; display_name: string | null;
@@ -101,7 +102,7 @@ function mapPrompt(prompt: PromptRow, user: AuthUser): unknown {
 function translationRows(context: AppContext, projectId: string, workspaceId?: string): VersionRow[] {
   return context.db.prepare(`SELECT tv.rowid AS sequence, tv.id, tv.segment_id, tv.parent_version_id,
       tv.base_translation_version_id, tv.root_translation_version_id, tv.comparison_version_id,
-      tv.prompt_version_id, tv.version_kind, tv.content, tv.created_at,
+      tv.prompt_version_id, tv.version_kind, tv.content, tv.created_at, tv.ai_run_id,
       u.display_name, ar.model, ar.context_manifest_json,
       (SELECT ts.submitted_at FROM translation_submissions ts WHERE ts.translation_version_id = tv.id
         AND ts.status = 'submitted' ORDER BY ts.submitted_at DESC LIMIT 1) AS submitted_at,
@@ -212,6 +213,7 @@ function mapVersion(context: AppContext, row: VersionRow, rowsById: Map<string, 
       ? JSON.stringify(parseJson(row.context_manifest_json, {})) : '服务器版本记录',
     origin: manual ? 'manual' : 'server',
     serverVersionKind: row.version_kind,
+    serverAiRunId: row.ai_run_id || null,
     serverBaseVersionId: row.root_translation_version_id || row.base_translation_version_id || row.id,
     serverRootVersionId: row.root_translation_version_id || row.id,
     serverComparisonVersionId: row.comparison_version_id || null,

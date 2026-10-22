@@ -1,6 +1,6 @@
 /**
  * 职责: 使用统一服务器模型执行翻译、AI 译后编辑及项目任务书/Prompt 生成
- * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-queue.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
+ * 依赖内部: ../auth/types.ts, ../context.ts, ../errors.ts, ../shared.ts, ./access.ts, ./activity.ts, ./ai-queue.ts, ./ai-run-audit.ts, ./prompt-structures.ts, ./prompts.ts, ./server-models.ts, ./translations.ts
  * 依赖外部: Fetch API
  * 暴露: executeAiTranslation | executeFullTranslation | cancelAiTranslation | executeProjectTextGeneration | cancelProjectTextGeneration | runConfiguredModel | testServerModelConnection | AiExecutionInput | FullTranslationInput | ProjectTextGenerationInput
  */
@@ -8,6 +8,7 @@
 import type { AuthUser } from '../auth/types.js';
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
+import { appendAiRunAudit } from './ai-run-audit.js';
 import { jsonText, newId, nowIso, sha256 } from '../shared.js';
 import { ensureAiPostEditAllowed, ensureProjectManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
@@ -549,17 +550,26 @@ async function executeNewFullTranslation(context: AppContext, user: AuthUser, wo
   activeTranslationRuns.set(input.requestId, { workspaceId, controller });
   try {
     const result = await enqueueAiRequest(user, input.requestId, `full_${data.kind}`, model.id,
-      () => callWithRetries(model, fullRequestBody(model, data), controller.signal));
+      () => callWithRetries(model, fullRequestBody(model, data), controller.signal, {
+        request: (payload) => appendAiRunAudit(context, runId, 'request', payload),
+        response: (payload) => appendAiRunAudit(context, runId, 'response', payload),
+      }));
     let items: FullTranslationItem[];
     try { items = validateFullTranslation(result.content, data.segments); }
     catch (error) {
+      appendAiRunAudit(context, runId, 'validation', { valid: false,
+        code: (error as ProviderError).code, message: (error as Error).message });
       failFullValidation(context, user, row, input, data, runId, result, error as ProviderError);
       throw new AppError(502, (error as ProviderError).code, (error as Error).message);
     }
+    appendAiRunAudit(context, runId, 'validation', { valid: true,
+      expectedSegmentIds: data.segments.map((s) => s.id), responseSegmentIds: items.map((s) => s.segmentId) });
     const ids = finalizeFullAiTranslations(context, user, workspaceId, data.promptVersionId,
       runId, items, result.usage, result.latencyMs, input.requestId, result.content, data.kind);
     return { runId, translationVersionIds: ids, status: 'succeeded' };
   } catch (error) {
+    appendAiRunAudit(context, runId, 'error', { code: (error as { code?: string }).code || 'AI_RUN_ERROR',
+      message: (error as Error).message });
     if (error instanceof AppError) throw error;
     if (!(error instanceof ProviderError)) throw error;
     failFullRun(context, user, row, input, runId, error);
