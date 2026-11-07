@@ -428,9 +428,10 @@ function responseIds(content: string): string[] {
 }
 
 function priorProjectGeneration(context: AppContext, requestId: string) {
-  return context.db.prepare(`SELECT id, status, output_text AS output FROM ai_runs
+  return context.db.prepare(`SELECT id, status, output_text AS output,actor_user_id AS actorId,
+    project_id AS projectId,operation_type AS operationType,input_hash AS inputHash FROM ai_runs
     WHERE request_id = ?`).get(requestId) as
-    { id: string; status: string; output: string | null } | undefined;
+    { id: string; status: string; output: string | null; actorId: string; projectId: string; operationType: string; inputHash: string } | undefined;
 }
 
 function createProjectRun(context: AppContext, user: AuthUser, projectId: string,
@@ -440,7 +441,7 @@ function createProjectRun(context: AppContext, user: AuthUser, projectId: string
     provider, model, request_id, input_hash, context_manifest_json, status, started_at,
     model_config_id, attempt_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`)
     .run(id, input.operationType, user.id, projectId, model.provider, model.model,
-      input.requestId, sha256(JSON.stringify(input.payload)), jsonText(input.payload), nowIso(), model.id);
+      input.requestId, sha256(JSON.stringify({ systemInstruction: input.systemInstruction, payload: input.payload })), jsonText(input.payload), nowIso(), model.id);
   recordActivity(context, { eventType: 'ai.request_started', actorUserId: user.id, projectId,
     requestId: input.requestId, metadata: { aiRunId: id, operationType: input.operationType } });
   return id;
@@ -472,6 +473,10 @@ export async function executeProjectTextGeneration(context: AppContext, user: Au
   ensureProjectManage(context, user, projectId);
   if (!input.requestId?.trim()) throw new AppError(400, 'AI_REQUEST_ID_REQUIRED', 'AI 请求必须包含 requestId。');
   const prior = priorProjectGeneration(context, input.requestId);
+  if (prior && (prior.actorId !== user.id || prior.projectId !== projectId || prior.operationType !== input.operationType
+    || prior.inputHash !== sha256(JSON.stringify({ systemInstruction: input.systemInstruction, payload: input.payload })))) {
+    throw new AppError(409, 'AI_REQUEST_CONTEXT_MISMATCH', '此 requestId 已用于其他账号、项目、生成任务或不同输入，请使用新的 requestId。');
+  }
   if (prior?.status === 'succeeded' && prior.output) return { runId: prior.id, content: prior.output };
   if (prior) throw new AppError(409, 'AI_REQUEST_EXISTS', '该 AI 请求已存在，请使用新的 requestId 重试。');
   const model = resolveServerModel(context, input.modelConfigId);
@@ -480,10 +485,14 @@ export async function executeProjectTextGeneration(context: AppContext, user: Au
   activeProjectRuns.set(input.requestId, { projectId, controller });
   try {
     const result = await enqueueAiRequest(user, input.requestId, input.operationType, model.id,
-      () => callWithRetries(model, projectRequestBody(model, input), controller.signal));
+      () => callWithRetries(model, projectRequestBody(model, input), controller.signal, {
+        request: (payload) => appendAiRunAudit(context, runId, 'request', payload),
+        response: (payload) => appendAiRunAudit(context, runId, 'response', payload),
+      }, (attempt, maxAttempts, lastError) => updateAiQueueProgress(user, input.requestId, attempt, maxAttempts, lastError)));
     finishProjectRun(context, runId, result);
     return { runId, content: result.content };
   } catch (error) {
+    appendAiRunAudit(context, runId, 'error', { code: (error as ProviderError).code, message: (error as Error).message });
     failProjectRun(context, user, projectId, input, runId, error as ProviderError);
     throw new AppError(502, (error as ProviderError).code || 'AI_PROVIDER_ERROR', (error as Error).message);
   } finally { activeProjectRuns.delete(input.requestId); }

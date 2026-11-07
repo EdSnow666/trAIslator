@@ -47,7 +47,7 @@ function mockModelContent(messages: Array<{ content?: string }> = []): string {
     return JSON.stringify({ translations: (payload.segments || []).map((item, index) =>
       ({ segmentId: item.segmentId, text: `${prefix} paragraph ${index + 1}.` })) });
   }
-  if (instruction.includes('cold-start translation brief')) return JSON.stringify({ genre: 'academic article',
+  if (instruction.includes('Create a translation brief')) return JSON.stringify({ genre: 'academic article',
     skopos: 'teaching', audience: 'students', register: 'formal', strategy: 'preserve explicit sentence structure' });
   if (instruction.includes('complete reusable translation prompt')) {
     return 'Translate the full document in a formal academic register.';

@@ -4,7 +4,7 @@
 |---|---|
 | `users.ts`、`admin-routes.ts` | 多角色账号、管理员跨用户查询和随机重置密码 |
 | `teaching*.ts` | 班级清单、成员与已分配项目详情、按班级项目/花名册下钻的学生提交 Prompt/译文审阅与导出入口，以及实验、阶段、状态、受试者纳入和撤回 |
-| `projects*.ts`、`project-generation-routes.ts`、`project-resources.ts`、`project-snapshot.ts`、`template-clone.ts` | 本地项目创建、发布/取消发布与软删除、模板任务书目录、任务书/Prompt 初始化与失败降级、受管班级/实验分配、工作空间、CAT 快照与模板克隆 |
+| `projects*.ts`、`project-generation-routes.ts`、`project-resources.ts`、`project-snapshot.ts`、`template-clone.ts` | 本地项目创建、发布/取消发布与软删除、模板任务书目录、五栏任务书/可执行全文 Prompt 分离生成、类型校验/原始响应审计/幂等保存与失败降级、受管班级/实验分配、工作空间、CAT 快照与模板克隆 |
 | `prompts*.ts` | 系统模板 Prompt 实体化继承、项目内递增版本、学生私有 Prompt、主动提交、教师发布/取消及已发布历史保留与版本安全归档 |
 | `prompt-coach*.ts`、`coach-prompt*.ts`、`coach-audit.ts` | 按用户教练 Prompt 归纳个人/多项目/全班已确认 Diff；私有指令版本、统一队列与取消、案例数排序、完整请求/原始响应/逐规则过滤及失败追加审计、账号隔离历史浏览导出、最近结果恢复 |
 | `translations*.ts`、`translation-diffs.ts` | 不可变译文版本、稳定机器比较基线、持久化 Diff、原子保存/确认/提交、精确工作流事件、AI 决策历史与幂等重试；学生提交不混入教师 CAT 主界面 |

@@ -16,6 +16,7 @@ import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, generationInstruc
   promptGenerationPayload, type GenerationLanguage } from './prompt-structures.js';
 import { createPromptVersion, listVisiblePrompts } from './prompts.js';
 import { serverModelCapability } from './server-models.js';
+import { appendAiRunAudit } from './ai-run-audit.js';
 
 export type SetupMode = 'manual' | 'auto' | 'inherit';
 export interface BriefContent { genre: string; skopos: string; audience: string; register: string; strategy: string }
@@ -104,21 +105,58 @@ function sourceSample(context: AppContext, projectId: string): string[] {
   return rows.map((row) => row.text);
 }
 
-function generatedBrief(content: string): BriefContent {
-  const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  try { return normalizeBrief(JSON.parse(cleaned) as Partial<BriefContent>); }
-  catch { throw new AppError(502, 'BRIEF_OUTPUT_INVALID', '模型未返回有效的冷启动任务书 JSON。'); }
+export function generatedBrief(content: string): BriefContent {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || Object.keys(parsed).length !== 5
+      || !Object.keys(EMPTY_BRIEF).every((key) => typeof parsed[key] === 'string' && parsed[key].trim())) throw new Error('invalid brief');
+    return normalizeBrief(parsed);
+  } catch { throw new AppError(502, 'BRIEF_OUTPUT_INVALID', '模型未返回有效的五栏任务书，请重新生成。'); }
+}
+
+export function generatedPrompt(content: string): string {
+  const clean = content.trim().replace(/^```(?:json|markdown|text)?\s*/i, '').replace(/\s*```$/, '').trim();
+  let parsed: any;
+  try { parsed = JSON.parse(clean); } catch { /* 正常 Prompt 为正文 */ }
+  if (!clean || (parsed && typeof parsed === 'object')
+    || /\[(?:在此处|在这里)[^\]\n]*(?:原文|文本)[^\]\n]*\]|\[(?:insert|paste)[^\]\n]*(?:source|text)[^\]\n]*\]/i.test(clean)) {
+    throw new AppError(502, 'PROMPT_OUTPUT_INVALID', '模型返回了任务书、JSON 或待填原文占位符，未保存为全文 Prompt，请重新生成。');
+  }
+  return clean;
+}
+
+function generationLanguages(context: AppContext, projectId: string): { sourceLanguage: string; targetLanguage: string } {
+  return context.db.prepare('SELECT source_language AS sourceLanguage,target_language AS targetLanguage FROM projects WHERE id=?')
+    .get(projectId) as { sourceLanguage: string; targetLanguage: string };
+}
+
+function validateGenerated<T>(context: AppContext, runId: string, validate: () => T): T {
+  try {
+    const content = validate();
+    appendAiRunAudit(context, runId, 'validation', { valid: true });
+    return content;
+  } catch (error) {
+    appendAiRunAudit(context, runId, 'validation', { valid: false, code: (error as AppError).code, message: (error as Error).message });
+    context.db.prepare("UPDATE ai_runs SET status='failed',error_code=? WHERE id=?").run((error as AppError).code, runId);
+    throw error;
+  }
 }
 
 export async function generateProjectBrief(context: AppContext, user: AuthUser, projectId: string,
   options: GenerationOptions = {}): Promise<string> {
-  const payload = briefPayload(sourceSample(context, projectId));
+  const payload = briefPayload(sourceSample(context, projectId), generationLanguages(context, projectId));
   const generated = await executeProjectTextGeneration(context, user, projectId, {
     operationType: 'style_identify', requestId: options.requestId || `brief-${newId()}`,
     ...(options.modelConfigId ? { modelConfigId: options.modelConfigId } : {}),
     systemInstruction: generationInstruction(BRIEF_SYSTEM, options.outputLanguage), payload,
   });
-  return saveProjectBrief(context, user, projectId, generatedBrief(generated.content),
+  const existing = context.db.prepare("SELECT id FROM project_brief_versions WHERE project_id=? AND json_extract(sample_manifest_json,'$.aiRunId')=?")
+    .get(projectId, generated.runId) as { id: string } | undefined;
+  if (existing) return existing.id;
+  const content = validateGenerated(context, generated.runId, () => generatedBrief(generated.content));
+  return saveProjectBrief(context, user, projectId, content,
     'ai_generated', undefined, generated.runId);
 }
 
@@ -138,14 +176,18 @@ export async function generateProjectPrompt(context: AppContext, user: AuthUser,
   options: GenerationOptions = {}): Promise<string> {
   const brief = currentBriefRow(context, projectId);
   const payload = promptGenerationPayload(brief ? parseJson(brief.content_json, EMPTY_BRIEF) : EMPTY_BRIEF,
-    sourceSample(context, projectId));
+    sourceSample(context, projectId), generationLanguages(context, projectId));
   const generated = await executeProjectTextGeneration(context, user, projectId, {
     operationType: 'prompt_generate', requestId: options.requestId || `prompt-${newId()}`,
     ...(options.modelConfigId ? { modelConfigId: options.modelConfigId } : {}),
     systemInstruction: generationInstruction(PROMPT_GENERATION_SYSTEM, options.outputLanguage), payload,
   });
+  const existing = context.db.prepare('SELECT id FROM prompt_versions WHERE ai_run_id=? AND created_by=?')
+    .get(generated.runId, user.id) as { id: string } | undefined;
+  if (existing) return existing.id;
+  const content = validateGenerated(context, generated.runId, () => generatedPrompt(generated.content));
   return createPromptVersion(context, user, projectId, { title: 'AI 生成全文 Prompt',
-    note: '依据冷启动任务书与原文前 10 段自动生成。', content: generated.content,
+    note: '依据任务书与原文前 10 段自动生成可执行翻译指令。', content,
     sourceType: 'ai_generated', aiRunId: generated.runId });
 }
 

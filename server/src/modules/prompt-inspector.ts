@@ -8,7 +8,7 @@
 import type { AppContext } from '../context.js';
 import { AppError } from '../errors.js';
 import { workspacePromptCoachMessages, workspaceCoachInstructionMessages } from './prompt-coach.js';
-import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, projectMessages,
+import { BRIEF_SYSTEM, PROMPT_GENERATION_SYSTEM, briefPayload, projectMessages, generationInstruction,
   fullTranslationMessages, promptGenerationPayload, translationMessages } from './prompt-structures.js';
 
 interface InspectInput { projectId: string; workspaceId?: string; segmentId?: string }
@@ -130,8 +130,10 @@ export function inspectPromptStructures(context: AppContext, input: InspectInput
       { id: 'prompt_coach', label: 'AI Prompt 教练', messages: coachMessages },
       { id: 'coach_instruction_generate', label: '根据修改记录生成教练 Prompt',
         messages: workspaceCoachInstructionMessages(context, input.workspaceId, userId) },
-      { id: 'brief', label: '生成任务书', messages: projectMessages(BRIEF_SYSTEM, briefPayload(sampleText)) },
-      { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(PROMPT_GENERATION_SYSTEM,
-        promptGenerationPayload(brief(context, project.id), sampleText)) },
+      { id: 'brief', label: '生成任务书', messages: projectMessages(generationInstruction(BRIEF_SYSTEM),
+        briefPayload(sampleText, { sourceLanguage: project.sourceLanguage, targetLanguage: project.targetLanguage })) },
+      { id: 'prompt_generate', label: '生成全文 Prompt', messages: projectMessages(generationInstruction(PROMPT_GENERATION_SYSTEM),
+        promptGenerationPayload(brief(context, project.id), sampleText,
+          { sourceLanguage: project.sourceLanguage, targetLanguage: project.targetLanguage })) },
     ] };
 }

@@ -576,8 +576,35 @@ async function exerciseDeferredGeneration(app: FastifyInstance, sessions: TestSe
   projectId: string): Promise<void> {
   for (const resource of ['brief', 'prompt']) {
     const generated = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/${resource}/generate`,
-      headers: { cookie: sessions.teacher.cookie }, payload: {} });
+      headers: { cookie: sessions.teacher.cookie }, payload: { requestId: `resource-audit-${resource}` } });
     assert.equal(generated.statusCode, 201, generated.body);
+    const repeated = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/${resource}/generate`,
+      headers: { cookie: sessions.teacher.cookie }, payload: { requestId: `resource-audit-${resource}` } });
+    assert.equal(repeated.statusCode, 201, repeated.body);
+    assert.equal(repeated.json().id, generated.json().id);
+  }
+  const collision = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/prompt/generate`,
+    headers: { cookie: sessions.teacher.cookie }, payload: { requestId: 'resource-audit-brief' } });
+  assert.equal(collision.statusCode, 409, collision.body);
+  assert.match(collision.json().message, /requestId.*其他账号、项目、生成任务/);
+  const changedInput = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/prompt/generate`,
+    headers: { cookie: sessions.teacher.cookie }, payload: { requestId: 'resource-audit-prompt', language: 'en' } });
+  assert.equal(changedInput.statusCode, 409, changedInput.body);
+  const audits = await app.inject({ method: 'GET', url: `/api/ai/runs?projectId=${projectId}`,
+    headers: { cookie: sessions.teacher.cookie } });
+  for (const resource of ['brief', 'prompt']) {
+    const run = audits.json().runs.find((item: { requestId: string }) => item.requestId === `resource-audit-${resource}`);
+    assert.ok(run);
+    const audit = await app.inject({ method: 'GET', url: `/api/ai/runs/${run.id}/audit`, headers: { cookie: sessions.teacher.cookie } });
+    const events = audit.json().events;
+    const request = events.find((item: { type: string }) => item.type === 'request').payload;
+    const response = events.find((item: { type: string }) => item.type === 'response').payload;
+    const payload = JSON.parse(request.body.messages[1].content);
+    assert.equal(payload.sourceLanguage, 'en');
+    assert.equal(payload.targetLanguage, 'zh-CN');
+    assert.equal('brief' in payload, resource === 'prompt');
+    assert.equal(JSON.parse(response.rawBody).choices[0].message.content.includes('Translate the full document'), resource === 'prompt');
+    assert.ok(events.some((item: { type: string; payload: { valid: boolean } }) => item.type === 'validation' && item.payload.valid));
   }
   const projects = await app.inject({ method: 'GET', url: '/api/projects',
     headers: { cookie: sessions.teacher.cookie } });
