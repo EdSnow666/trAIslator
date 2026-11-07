@@ -57,7 +57,7 @@ function traceDiff(before: string[], after: string[], matrix: number[][]): DiffP
   return mergeParts(parts);
 }
 
-function buildDiff(before: string, after: string, language: string): DiffPart[] {
+export function buildDiff(before: string, after: string, language: string): DiffPart[] {
   const beforeTokens = tokenize(before, language);
   const afterTokens = tokenize(after, language);
   return traceDiff(beforeTokens, afterTokens, buildMatrix(beforeTokens, afterTokens));

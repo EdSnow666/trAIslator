@@ -652,8 +652,11 @@ function renderCoachEvidence(item) {
   const hasDiff = item.diff.some((part) => part.type !== 'same');
   if (!hasDiff) return '';
   const label = item.label || [item.projectName, item.submittedBy, item.segmentId].filter(Boolean).join(' · ');
+  const matches = item.matchedSentences || [];
+  const diff = matches.length ? matches.map((match) => `<div class="coach-evidence-diff" aria-label="修改句 Diff">${renderDiffParts(match.diff)}</div>`).join('')
+    : `<div class="coach-evidence-diff" aria-label="机器基线到人工编辑 Diff">${renderDiffParts(item.diff)}</div>`;
   return `<div class="coach-evidence-item"><strong>${escapeHtml(label)} · ${escapeHtml(item.signal)}</strong>
-    <div class="coach-evidence-diff" aria-label="机器基线到人工编辑 Diff">${renderDiffParts(item.diff)}</div></div>`;
+    ${diff}${matches.length ? `<details><summary>完整上下文</summary><div class="coach-evidence-diff">${renderDiffParts(item.diff)}</div></details>` : ''}</div>`;
 }
 
 function renderStatus(state) {

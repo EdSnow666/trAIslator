@@ -12,6 +12,8 @@ import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { normalizedRules, getPromptCoachSettings } from '../src/modules/prompt-coach.js';
 import { COACH_BASELINE_ID, DEFAULT_COACH_PROMPT, COACH_HARNESS } from '../src/modules/coach-baseline.js';
+import { locateChangedSentence, matchCoachEvidence, projectCoachEvidence } from '../src/modules/coach-evidence.js';
+import { buildDiff } from '../src/modules/translation-diffs.js';
 import { appendCoachAudit, coachAuditEvents } from '../src/modules/coach-audit.js';
 import { appendAiRunAudit, readAiRunAudit } from '../src/modules/ai-run-audit.js';
 import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
@@ -73,6 +75,25 @@ test('带示例输出结构保持兼容，示例原文不裁剪，按独立支�
   assert.deepEqual(Object.keys(rules[0]!).sort(),
     ['id', 'category', 'title', 'instruction', 'supportCount', 'supportTier', 'evidence'].sort());
   assert.equal(rules[1]!.evidence[0]!.signal, '单例候选');
+});
+
+test('修改句精确及模糊匹配使用真实文本，通过持久化 Diff 对齐原译', () => {
+  const aiText = '天气晴朗。她向我们倾诉生活点滴。后来大家一起回家。';
+  const postEditText = '天气晴朗。她向我们讲述生活故事。后来大家一起回家。';
+  const item = { aiText, postEditText, diff: buildDiff(aiText, postEditText, 'zh') };
+  for (const query of ['她向我们讲述生活故事。', '她向我们讲述自己的生活故事。']) {
+    const match = matchCoachEvidence(item, [query]) as any;
+    assert.equal(match.evidenceMatch, 'matched');
+    assert.equal(match.matchedSentences[0].postEditText, '她向我们讲述生活故事。');
+    assert.equal(match.matchedSentences[0].aiText, '她向我们倾诉生活点滴。');
+    assert.notEqual(match.matchedSentences[0].postEditText, postEditText);
+  }
+  assert.equal((matchCoachEvidence(item, ['火星探测器登陆成功。']) as any).evidenceMatch, 'unmatched');
+  assert.equal(locateChangedSentence('孩子们主动走来。孩子们主动走去。', '孩子们主动走过。'), null);
+  const result = { rules: [{ instruction: '人工改写：她向我们讲述生活故事。 说明：自然表达。', evidence: [item] }] };
+  const snapshot = JSON.stringify(result);
+  assert.equal(projectCoachEvidence(result).rules[0].evidence[0].matchedSentences.length, 1);
+  assert.equal(JSON.stringify(result), snapshot);
 });
 
 test('迁移同时恢复历史指令与当前草稿，保留原运行内容和绑定', () => {

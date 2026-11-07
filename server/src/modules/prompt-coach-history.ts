@@ -9,6 +9,7 @@ import type { AppContext } from '../context.js';
 import type { AuthUser } from '../auth/types.js';
 import { AppError } from '../errors.js';
 import { coachAuditEvents } from './coach-audit.js';
+import { projectCoachEvidence } from './coach-evidence.js';
 
 const projectMatch = `(r.project_id = ? OR EXISTS (
   SELECT 1 FROM json_each(r.selected_project_ids_json) WHERE value = ?)
@@ -21,7 +22,7 @@ export function latestProjectCoachResult(context: AppContext, userId: string,
     WHERE r.actor_user_id = ? AND ${projectMatch}
     ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`)
     .get(userId, projectId, projectId, projectId) as { result_json: string } | undefined;
-  return row ? JSON.parse(row.result_json) : null;
+  return row ? projectCoachEvidence(JSON.parse(row.result_json)) : null;
 }
 
 function pageOffset(value: unknown): number {
@@ -70,7 +71,7 @@ export function coachHistoryDetail(context: AppContext, user: AuthUser, id: stri
     .get(id) as { version: number; title: string } | undefined;
   return { ...row, coachPromptVersion: version || null,
     audit: coachAuditEvents(context, user.id, row.requestId),
-    inputSnapshot: JSON.parse(row.inputSnapshot), result: JSON.parse(row.result) };
+    inputSnapshot: JSON.parse(row.inputSnapshot), result: projectCoachEvidence(JSON.parse(row.result)) };
 }
 
 export function coachAttemptDetail(context: AppContext, user: AuthUser, requestId: string): unknown {

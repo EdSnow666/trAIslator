@@ -16,6 +16,20 @@ test('规则加入草稿时完整携带真实改写示例', () => {
   assert.ok(buildPromptRuleAppendix([{ instruction }]).includes(instruction));
 });
 
+test('修改依据默认显示匹配句 Diff，整段只在完整上下文内显示', () => {
+  const source = readFileSync(new URL('../ui/render.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function renderCoachEvidence(');
+  const end = source.indexOf('function renderStatus(', start);
+  const context = vm.createContext({ escapeHtml: (s) => String(s || ''),
+    renderDiffParts: (parts) => parts.map((p) => p.value).join('') });
+  vm.runInContext(source.slice(start, end), context);
+  const html = context.renderCoachEvidence({ diff: [{ type: 'added', value: '整段' }],
+    matchedSentences: [{ diff: [{ type: 'added', value: '修改句' }] }] });
+  assert.match(html, /aria-label="修改句 Diff">修改句/);
+  assert.match(html, /<details><summary>完整上下文<\/summary>/);
+  assert.ok(html.indexOf('修改句') < html.indexOf('完整上下文'));
+});
+
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 const modalRoot = { innerHTML: '' };
 globalThis.document = { querySelector: () => modalRoot };

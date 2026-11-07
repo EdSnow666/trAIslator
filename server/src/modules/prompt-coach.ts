@@ -18,6 +18,7 @@ import { generateCoachInstruction, coachInstructionMessages } from './coach-prom
 import { activeCoachPrompt, coachPromptVersions, saveCoachPromptVersion,
   activateCoachPromptVersion, type CoachVersionInput } from './coach-prompt-versions.js';
 import { COACH_BASELINE_ID, DEFAULT_COACH_PROMPT, COACH_HARNESS } from './coach-baseline.js';
+import { matchCoachEvidence, COACH_EVIDENCE_INSTRUCTION } from './coach-evidence.js';
 export { DEFAULT_COACH_PROMPT } from './coach-baseline.js';
 
 export interface PromptCoachInput {
@@ -32,7 +33,7 @@ interface CoachRecord {
 }
 interface ModelRule {
   id?: unknown; category?: unknown; title?: unknown; instruction?: unknown;
-  evidenceRecordIds?: unknown; signal?: unknown;
+  evidenceRecordIds?: unknown; signal?: unknown; changedSentences?: unknown;
 }
 interface EnrichedRule {
   id: string; category: string; title: string; instruction: string; supportCount: number;
@@ -246,7 +247,7 @@ function classRecords(context: AppContext, classId: string): CoachRecord[] {
 
 function promptCoachMessages(records: CoachRecord[], coachPrompt: string): unknown[] {
   return [
-    { role: 'system', content: COACH_HARNESS },
+    { role: 'system', content: `${COACH_HARNESS}\n${COACH_EVIDENCE_INSTRUCTION}` },
     { role: 'user', content: JSON.stringify({ coachInstruction: coachPrompt, records }) },
   ];
 }
@@ -300,7 +301,8 @@ function enrichRule(rule: ModelRule, index: number,
     title: typeof rule.title === 'string' ? rule.title : `规则 ${index + 1}`,
     instruction: rule.instruction, supportCount: evidence.length,
     supportTier: evidence.length >= 2 ? 'repeated' : 'candidate',
-    evidence: evidence.map((item) => ({ ...item, signal: String(rule.signal || '人工 Diff 支持') })) };
+    evidence: evidence.map((item) => ({ ...item, signal: String(rule.signal || '人工 Diff 支持'),
+      ...matchCoachEvidence(item, rule.changedSentences, String(rule.instruction || '')) })) };
 }
 
 function priorRun(context: AppContext, userId: string, requestId: string): unknown | null {
