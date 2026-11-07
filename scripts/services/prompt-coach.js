@@ -139,7 +139,7 @@ export function analyzePromptCoach(project) {
 
 export function buildPromptRuleAppendix(rules) {
   const lines = rules.map((rule, index) => `${index + 1}. ${rule.instruction}`);
-  return `## 根据人工译后编辑新增的句子结构规则\n\n${lines.join('\n')}`;
+  return `## 根据人工译后编辑新增的句子结构规则\n\n${lines.join('\n')}\n\n请提供符合上述要求的其他译文，不要照抄人工改写示例。`;
 }
 export function buildPromptCoachArtifact(project) {
   const analysis = analyzePromptCoach(project);

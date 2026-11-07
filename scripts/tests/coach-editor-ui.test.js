@@ -14,6 +14,12 @@ import { analyzePromptCoach, buildPromptRuleAppendix } from '../services/prompt-
 test('规则加入草稿时完整携带真实改写示例', () => {
   const instruction = '先交代说话者。\nAI 原译：“你好，”她说道。\n人工改写：她说：“你好。”\n示例展示引语归属前置。';
   assert.ok(buildPromptRuleAppendix([{ instruction }]).includes(instruction));
+  const rules = [{ instruction }, { instruction: '保持语气自然。' }];
+  const before = JSON.stringify(rules);
+  const appendix = buildPromptRuleAppendix(rules);
+  assert.ok(appendix.endsWith('请提供符合上述要求的其他译文，不要照抄人工改写示例。'));
+  assert.equal(appendix.split('请提供符合上述要求的其他译文').length - 1, 1);
+  assert.equal(JSON.stringify(rules), before);
 });
 
 test('修改依据默认显示匹配句 Diff，整段只在完整上下文内显示', () => {
@@ -72,7 +78,7 @@ test('加入规则先选目标，译后编辑草稿使用译后编辑基础内�
     promptEditingBlocked: () => false,
     store: { getProject: () => project, getPrompt: (id) => ({ content: id === 'pe' ? '编辑基础' : '翻译基础' }) },
     document: { querySelectorAll: () => [{ dataset: { coachRule: 'r' } }] },
-    buildPromptRuleAppendix: () => '规则内容', showToast: () => {},
+    buildPromptRuleAppendix, showToast: () => {},
     dialogs: { modal: (_title, _body, footer) => { chooser = footer; },
       openPromptModal: (content, options) => { draft = { content, ...options }; } },
   });
@@ -81,10 +87,11 @@ test('加入规则先选目标，译后编辑草稿使用译后编辑基础内�
   assert.equal(draft, null);
   vm.runInContext("confirmCoachRuleTarget({dataset:{promptKind:'post_edit'}})", context);
   assert.equal(draft.promptKind, 'post_edit');
-  assert.equal(draft.content, '编辑基础\n\n规则内容');
+  assert.equal(draft.content, `编辑基础\n\n${buildPromptRuleAppendix(project.promptCoachResult.rules)}`);
+  assert.ok(draft.content.endsWith('请提供符合上述要求的其他译文，不要照抄人工改写示例。'));
   vm.runInContext("applyCoachRules(); confirmCoachRuleTarget({dataset:{promptKind:'translation'}})", context);
   assert.equal(draft.promptKind, 'translation');
-  assert.equal(draft.content, '翻译基础\n\n规则内容');
+  assert.equal(draft.content, `翻译基础\n\n${buildPromptRuleAppendix(project.promptCoachResult.rules)}`);
   project.aiPostEditAllowed = false;
   vm.runInContext('applyCoachRules();', context);
   assert.doesNotMatch(chooser, /data-prompt-kind="post_edit"/);
