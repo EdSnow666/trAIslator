@@ -12,12 +12,14 @@ type QueueState = 'waiting' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export interface AiQueueStatus {
   requestId: string; operation: string; state: QueueState; ahead: number;
   estimatedWaitSeconds: number; canPrioritize: boolean;
+  elapsedSeconds: number; attempt?: number; maxAttempts?: number; lastError?: string;
 }
 interface QueueEntry {
   key: string; requestId: string; userId: string; operation: string; resourceKey: string;
   priority: number; sequence: number; state: QueueState; queuedAt: number; startedAt?: number;
   completedAt?: number; task: () => Promise<unknown>; resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
+  progress?: { attempt: number; maxAttempts: number; lastError: string };
 }
 
 function positiveNumber(value: string | undefined, fallback: number): number {
@@ -135,10 +137,18 @@ export function aiQueueStatus(user: AuthUser, requestId: string): AiQueueStatus 
     && (item.priority > entry.priority || (item.priority === entry.priority
       && item.sequence < entry.sequence))).length + running : 0;
   return { requestId, operation: entry.operation, state: entry.state, ahead,
+    elapsedSeconds: entry.startedAt ? Math.floor(((entry.completedAt || Date.now()) - entry.startedAt) / 1000) : 0,
+    ...entry.progress,
     estimatedWaitSeconds: Math.ceil((ahead * averageDurationMs
       + aiResourceCooldownRemaining(entry.resourceKey)) / 1000),
     canPrioritize: entry.state === 'waiting'
       && user.roles.some((role) => ['admin', 'teacher'].includes(role)) };
+}
+
+export function updateAiQueueProgress(user: AuthUser, requestId: string,
+  attempt: number, maxAttempts: number, lastError: string): void {
+  const entry = entries.get(entryKey(user.id, requestId));
+  if (entry?.state === 'running') entry.progress = { attempt, maxAttempts, lastError };
 }
 
 export function prioritizeAiRequest(user: AuthUser, requestId: string): AiQueueStatus {

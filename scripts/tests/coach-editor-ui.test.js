@@ -30,6 +30,17 @@ test('修改依据默认显示匹配句 Diff，整段只在完整上下文内显
   assert.ok(html.indexOf('修改句') < html.indexOf('完整上下文'));
 });
 
+test('运行窗口显示等待秒数与超时重试，不再一直停在分析中', () => {
+  const source = readFileSync(new URL('../ui/ai-queue-status.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function statusLabel(');
+  const end = source.indexOf('function renderStatus(', start);
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(start, end), context);
+  assert.match(context.statusLabel({ state: 'running', attempt: 1, elapsedSeconds: 12 }), /等待模型返回 · 已等待 12 秒/);
+  assert.match(context.statusLabel({ state: 'running', attempt: 2, maxAttempts: 2,
+    elapsedSeconds: 61, lastError: 'PROVIDER_TIMEOUT' }), /模型响应超时，正在重试 2\/2 · 已等待 61 秒/);
+});
+
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 const modalRoot = { innerHTML: '' };
 globalThis.document = { querySelector: () => modalRoot };

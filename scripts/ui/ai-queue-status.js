@@ -12,7 +12,11 @@ let currentStatus = null;
 
 function statusLabel(status) {
   if (status.state === 'waiting') return `排队中，预计前面还有 ${status.ahead} 位`;
-  if (status.state === 'running') return 'AI 生成中';
+  if (status.state === 'running') {
+    const elapsed = `已等待 ${status.elapsedSeconds || 0} 秒`;
+    const retry = status.attempt > 1 ? `${status.lastError === 'PROVIDER_TIMEOUT' ? '模型响应超时' : '模型请求失败'}，正在重试 ${status.attempt}/${status.maxAttempts}` : '等待模型返回';
+    return `${retry} · ${elapsed}`;
+  }
   if (status.state === 'cancelled') return '已取消';
   return '';
 }
@@ -26,6 +30,7 @@ function renderStatus(status) {
   root.querySelector('[data-action="prioritize-ai-request"]').hidden = !currentStatus?.canPrioritize;
   const progress = document.querySelector('[data-translation-progress], [data-prompt-coach-progress], [data-coach-instruction-status]');
   if (progress && currentStatus?.state === 'waiting') progress.textContent = statusLabel(currentStatus);
+  if (progress && currentStatus?.state === 'running') progress.textContent = statusLabel(currentStatus);
 }
 
 export function initAiQueueStatus() {

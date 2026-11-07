@@ -13,7 +13,7 @@ import { jsonText, newId, nowIso, sha256 } from '../shared.js';
 import { ensureAiPostEditAllowed, ensureProjectManage, ensureWorkspaceOwner } from './access.js';
 import { recordActivity } from './activity.js';
 import { cancelAiQueueRequest, clearAiResourceCooldown, cooldownAiResource,
-  enqueueAiRequest } from './ai-queue.js';
+  enqueueAiRequest, updateAiQueueProgress } from './ai-queue.js';
 import { fullTranslationMessages, projectMessages, translationMessages } from './prompt-structures.js';
 import { listVisiblePrompts } from './prompts.js';
 import { resolveServerModel, type ResolvedServerModel } from './server-models.js';
@@ -247,12 +247,14 @@ async function callOnce(model: ResolvedServerModel, body: unknown, external?: Ab
 }
 
 async function callWithRetries(model: ResolvedServerModel, body: unknown, signal?: AbortSignal,
-  observer?: ModelObserver): Promise<ProviderResult> {
+  observer?: ModelObserver,
+  progress?: (attempt: number, maxAttempts: number, lastError: string) => void): Promise<ProviderResult> {
   const started = Date.now();
   let attempts = 0;
   let lastError = new ProviderError('PROVIDER_UNKNOWN', '模型调用失败。');
   for (let attempt = 1; attempt <= model.maxRetries + 1; attempt += 1) {
     attempts = attempt;
+    progress?.(attempt, model.maxRetries + 1, attempt > 1 ? lastError.code : '');
     try {
       const result = await callOnce(model, body, signal, observer);
       return { ...result, attempts, latencyMs: Date.now() - started };
@@ -270,7 +272,8 @@ export async function runConfiguredModel(context: AppContext, user: AuthUser, re
   const model = resolveServerModel(context, modelConfigId);
   const payload = typeof body === 'object' && body !== null ? { ...body, model: model.model } : body;
   const result = await enqueueAiRequest(user, requestId, operation, model.id,
-    () => callWithRetries(model, payload, signal, observer));
+    () => callWithRetries(model, payload, signal, observer,
+      (attempt, maxAttempts, lastError) => updateAiQueueProgress(user, requestId, attempt, maxAttempts, lastError)));
   return { ...result, modelConfigId: model.id, model: model.model };
 }
 

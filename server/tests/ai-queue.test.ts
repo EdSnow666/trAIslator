@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AuthUser } from '../src/auth/types.js';
-import { aiQueueStatus, enqueueAiRequest, prioritizeAiRequest } from '../src/modules/ai-queue.js';
+import { aiQueueStatus, enqueueAiRequest, prioritizeAiRequest, updateAiQueueProgress } from '../src/modules/ai-queue.js';
 
 test('统一 AI 队列显示位次并允许教师手动插队', async () => {
   const student: AuthUser = { id: 'queue-student', username: 'queue-student',
@@ -19,6 +19,11 @@ test('统一 AI 队列显示位次并允许教师手动插队', async () => {
   const running = enqueueAiRequest(student, 'queue-running', 'translation', 'model-1',
     () => new Promise<string>((resolve) => { releaseRunning = () => resolve('running'); }));
   const order: string[] = [];
+  updateAiQueueProgress(student, 'queue-running', 2, 2, 'PROVIDER_TIMEOUT');
+  const progress = aiQueueStatus(student, 'queue-running');
+  assert.equal(progress.attempt, 2);
+  assert.equal(progress.lastError, 'PROVIDER_TIMEOUT');
+  assert.equal(typeof progress.elapsedSeconds, 'number');
   const waitingStudent = enqueueAiRequest(student, 'queue-student-waiting', 'translation', 'model-1',
     async () => { order.push('student'); return 'student'; });
   const waitingTeacher = enqueueAiRequest(teacher, 'queue-teacher-waiting', 'translation', 'model-1',
