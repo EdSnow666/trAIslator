@@ -35,6 +35,18 @@ export function locateChangedSentence(text: string, query: string): Span | null 
   if (exact >= 0 && text.indexOf(query, exact + 1) < 0) return { start: exact, end: exact + query.length, score: 1 };
   const needle = normalized(query);
   if (needle.length < 4) return null;
+  // 忽略引号、逗号、省略号后仍是连续原句时，保留真实字符位置。
+  let folded = ''; const starts: number[] = []; const ends: number[] = [];
+  let offset = 0;
+  for (const char of text) {
+    const value = normalized(char);
+    for (let i = 0; i < value.length; i++) { starts.push(offset); ends.push(offset + char.length); }
+    folded += value; offset += char.length;
+  }
+  const normalizedIndex = folded.indexOf(needle);
+  if (normalizedIndex >= 0 && folded.indexOf(needle, normalizedIndex + 1) < 0) {
+    return { start: starts[normalizedIndex]!, end: ends[normalizedIndex + needle.length - 1]!, score: 1 };
+  }
   const candidates: Span[] = [];
   for (const pattern of [/[^。！？!?；;\n]+[。！？!?；;\n]*/gu,
     /[^。！？!?；;，,\n]+[。！？!?；;，,\n]*/gu]) {

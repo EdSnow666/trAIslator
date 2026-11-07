@@ -90,6 +90,9 @@ test('修改句精确及模糊匹配使用真实文本，通过持久化 Diff �
   }
   assert.equal((matchCoachEvidence(item, ['火星探测器登陆成功。']) as any).evidenceMatch, 'unmatched');
   assert.equal(locateChangedSentence('孩子们主动走来。孩子们主动走去。', '孩子们主动走过。'), null);
+  const quote = '学生志愿者说：“孩子们甚至会主动走来，讲述故事。”';
+  const span = locateChangedSentence(quote, '孩子们甚至会主动走来……')!;
+  assert.equal(quote.slice(span.start, span.end), '孩子们甚至会主动走来');
   const result = { rules: [{ instruction: '人工改写：她向我们讲述生活故事。 说明：自然表达。', evidence: [item] }] };
   const snapshot = JSON.stringify(result);
   assert.equal(projectCoachEvidence(result).rules[0].evidence[0].matchedSentences.length, 1);
